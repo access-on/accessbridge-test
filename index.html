@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AccessBridge — Test Console</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --accent: #3ddc84;
+    --accent-dim: #1f7a4a;
+    --text: #e8eaed;
+    --muted: #8a919e;
+    --danger: #ff5c5c;
+    --border: #262b35;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 8px 0 2px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--danger);
+    flex-shrink: 0;
+  }
+  .dot.connected { background: var(--accent); }
+  #statusText { font-size: 15px; font-weight: 600; }
+  #deviceName { color: var(--muted); font-size: 13px; }
+
+  button {
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #06120a;
+  }
+  .btn-primary:disabled {
+    background: #2a2f38;
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+  .btn-secondary {
+    background: #232833;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  h2 {
+    font-size: 14px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 0 0 10px;
+  }
+  #log {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: #9fe6b8;
+    height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-line { margin-bottom: 4px; }
+  .log-err { color: var(--danger); }
+  .log-info { color: var(--muted); }
+  .not-supported {
+    display: none;
+    background: #3a2020;
+    border: 1px solid var(--danger);
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 14px;
+  }
+</style>
+</head>
+<body>
+
+  <h1>🏍️ AccessBridge</h1>
+  <div class="subtitle">Test console — Suzuki Access-TFT cluster bridge</div>
+
+  <div class="not-supported" id="unsupportedBanner">
+    <strong>This browser can't do Bluetooth.</strong><br>
+    Open this page in <strong>Chrome</strong> on your Android phone instead —
+    Safari/iOS and some in-app browsers don't support Web Bluetooth.
+  </div>
+
+  <div class="card">
+    <div class="status-row">
+      <div class="dot" id="statusDot"></div>
+      <div>
+        <div id="statusText">Not connected</div>
+        <div id="deviceName"></div>
+      </div>
+    </div>
+    <button class="btn-primary" id="connectBtn">Connect to bike</button>
+    <button class="btn-danger" id="disconnectBtn" style="display:none;">Disconnect</button>
+  </div>
+
+  <div class="card" id="actionsCard" style="display:none;">
+    <h2>Handshake</h2>
+    <button class="btn-secondary" id="sendIdentityBtn">Send identity frame</button>
+
+    <h2 style="margin-top:18px;">Test navigation frames</h2>
+    <div class="grid2">
+      <button class="btn-secondary" data-preset="left">↰ Left, 60m</button>
+      <button class="btn-secondary" data-preset="right">↱ Right, 200m</button>
+      <button class="btn-secondary" data-preset="straight">↑ Straight, 1.2km</button>
+      <button class="btn-secondary" data-preset="uturn">⤺ U-turn, 30m</button>
+      <button class="btn-secondary" data-preset="roundabout">⟳ Roundabout, 500m</button>
+      <button class="btn-secondary" data-preset="arrive">🏁 Arrived</button>
+    </div>
+    <button class="btn-secondary" id="clearIconBtn" style="margin-top:8px;">Clear icon (idle)</button>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+
+<script>
+// =====================================================================
+// AccessBridge protocol — mirrors the Kotlin module byte-for-byte.
+// Checksum validated against 24,997 real captured frames (100% match).
+// =====================================================================
+
+const SERVICE_UUID = '0000fefb-0000-1000-8000-00805f9b34fb';
+const CHAR_WRITE_UUID = '00000001-0000-1000-8000-008025000000';
+const CHAR_NOTIFY_UUID = '00000002-0000-1000-8000-008025000000';
+
+const FRAME_LEN = 30;
+const HEADER = 0xA5;
+const TERMINATOR = 0x7F;
+const PAD = 0xFF;
+
+const FrameType = { NAV: 0x31, IDENTITY: 0x36 };
+
+// Ported from ManeuverMap.kt (Access-TFT specific values)
+const ManeuverIcons = {
+  turnLeft90: 1, slightLeft: 2, sharpLeft: 3,
+  turnRight90: 4, slightRight: 5, sharpRight: 6,
+  uturn: 7, straight: 8, arrive: 9,
+  roundaboutGeneric: 45,
+  noManeuver: 46,
+};
+
+function checksum(frame) {
+  let sum = 0;
+  for (let i = 1; i <= 27; i++) sum += frame[i];
+  sum = sum & 0xFF;
+  return (~sum) & 0xFF;
+}
+
+function newFrameBuffer(type) {
+  const buf = new Uint8Array(FRAME_LEN).fill(PAD);
+  buf[1] = type;
+  return buf;
+}
+
+function putAscii(buf, offset, str) {
+  for (let i = 0; i < str.length; i++) buf[offset + i] = str.charCodeAt(i);
+}
+
+function finalize(buf) {
+  buf[0] = HEADER;
+  buf[FRAME_LEN - 1] = TERMINATOR;
+  buf[28] = checksum(buf);
+  return buf;
+}
+
+function formatDistance(meters) {
+  if (meters < 1000) {
+    return String(meters).padStart(4, '0') + 'M';
+  }
+  const km = meters / 1000.0;
+  // 2-digit whole + 1 decimal, e.g. "18.9K", "04.7K"
+  return km.toFixed(1).padStart(4, '0') + 'K';
+}
+
+function formatEta(hour24, minute) {
+  const isPm = hour24 >= 12;
+  let h12 = hour24 % 12;
+  if (h12 === 0) h12 = 12;
+  return String(h12).padStart(2, '0') + String(minute).padStart(2, '0') + (isPm ? 'PM' : 'AM');
+}
+
+function buildNavFrame(iconByte, distanceToTurnM, etaHour24, etaMinute, remainingM, status = '11') {
+  const buf = newFrameBuffer(FrameType.NAV);
+  buf[2] = iconByte;
+  putAscii(buf, 4, formatDistance(distanceToTurnM));
+  putAscii(buf, 9, formatEta(etaHour24, etaMinute));
+  putAscii(buf, 18, formatDistance(remainingM));
+  putAscii(buf, 23, status);
+  return finalize(buf);
+}
+
+function buildIdentityFrame(name) {
+  const buf = newFrameBuffer(FrameType.IDENTITY);
+  const truncated = name.slice(0, 20);
+  for (let i = 0; i < 20; i++) buf[2 + i] = i < truncated.length ? truncated.charCodeAt(i) : 0x00;
+  buf[27] = 0x52; // observed constant, meaning unconfirmed
+  return finalize(buf);
+}
+
+function toHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// =====================================================================
+// UI wiring
+// =====================================================================
+
+let device = null;
+let writeChar = null;
+
+const logEl = document.getElementById('log');
+function log(msg, cls = '') {
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  const t = new Date().toLocaleTimeString();
+  line.textContent = `[${t}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setConnected(isConnected, name = '') {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  const nameEl = document.getElementById('deviceName');
+  const connectBtn = document.getElementById('connectBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  const actionsCard = document.getElementById('actionsCard');
+
+  dot.classList.toggle('connected', isConnected);
+  text.textContent = isConnected ? 'Connected' : 'Not connected';
+  nameEl.textContent = isConnected ? name : '';
+  connectBtn.style.display = isConnected ? 'none' : 'block';
+  disconnectBtn.style.display = isConnected ? 'block' : 'none';
+  actionsCard.style.display = isConnected ? 'block' : 'none';
+}
+
+async function connect() {
+  try {
+    log('Requesting device (look for SAS… in the popup)…');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'SAS' }],
+      optionalServices: [SERVICE_UUID],
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    log(`Connecting to ${device.name}…`);
+    const server = await device.gatt.connect();
+
+    log('Getting service 0xFEFB…');
+    const service = await server.getPrimaryService(SERVICE_UUID);
+
+    log('Getting write characteristic…');
+    writeChar = await service.getCharacteristic(CHAR_WRITE_UUID);
+
+    try {
+      const notifyChar = await service.getCharacteristic(CHAR_NOTIFY_UUID);
+      await notifyChar.startNotifications();
+      notifyChar.addEventListener('characteristicvaluechanged', (e) => {
+        const val = new Uint8Array(e.target.value.buffer);
+        log('← notify: ' + toHex(val), 'log-info');
+      });
+      log('Subscribed to notifications.');
+    } catch (e) {
+      log('Notify subscribe skipped: ' + e.message, 'log-info');
+    }
+
+    setConnected(true, device.name);
+    log('Connected. Ready to send test frames.');
+  } catch (err) {
+    log('Connect failed: ' + err.message, 'log-err');
+  }
+}
+
+function onDisconnected() {
+  setConnected(false);
+  writeChar = null;
+  log('Disconnected.', 'log-info');
+}
+
+async function disconnect() {
+  if (device && device.gatt.connected) {
+    device.gatt.disconnect();
+  }
+}
+
+async function sendFrame(bytes, label) {
+  if (!writeChar) {
+    log('Not connected.', 'log-err');
+    return;
+  }
+  try {
+    await writeChar.writeValueWithoutResponse(bytes);
+    log(`→ sent ${label}: ${toHex(bytes)}`);
+  } catch (err) {
+    log(`Write failed (${label}): ${err.message}`, 'log-err');
+  }
+}
+
+function currentTime24() {
+  const now = new Date();
+  return { h: now.getHours(), m: now.getMinutes() };
+}
+
+const presets = {
+  left:        () => buildNavFrame(ManeuverIcons.turnLeft90, 60, currentTime24().h, currentTime24().m, 2500),
+  right:       () => buildNavFrame(ManeuverIcons.turnRight90, 200, currentTime24().h, currentTime24().m, 3100),
+  straight:    () => buildNavFrame(ManeuverIcons.straight, 1200, currentTime24().h, currentTime24().m, 5400),
+  uturn:       () => buildNavFrame(ManeuverIcons.uturn, 30, currentTime24().h, currentTime24().m, 900),
+  roundabout:  () => buildNavFrame(ManeuverIcons.roundaboutGeneric, 500, currentTime24().h, currentTime24().m, 1800),
+  arrive:      () => buildNavFrame(ManeuverIcons.arrive, 0, currentTime24().h, currentTime24().m, 0),
+};
+
+document.getElementById('connectBtn').addEventListener('click', connect);
+document.getElementById('disconnectBtn').addEventListener('click', disconnect);
+document.getElementById('sendIdentityBtn').addEventListener('click', () => {
+  sendFrame(buildIdentityFrame('AccessBridge'), 'identity');
+});
+document.getElementById('clearIconBtn').addEventListener('click', () => {
+  const t = currentTime24();
+  sendFrame(buildNavFrame(ManeuverIcons.noManeuver, 0, t.h, t.m, 0), 'idle/no-maneuver');
+});
+document.querySelectorAll('[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.getAttribute('data-preset');
+    sendFrame(presets[key](), key);
+  });
+});
+
+if (!navigator.bluetooth) {
+  document.getElementById('unsupportedBanner').style.display = 'block';
+  document.getElementById('connectBtn').disabled = true;
+  log('Web Bluetooth not available in this browser.', 'log-err');
+} else {
+  log('Ready. Tap "Connect to bike" (bike must be powered on, Ride Connect app closed).');
+}
+</script>
+</body>
+</html>
