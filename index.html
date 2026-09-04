@@ -3,139 +3,72 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AccessBridge — Test Console</title>
+<title>AccessBridge</title>
 <style>
   :root {
-    --bg: #0f1115;
-    --card: #171a21;
-    --accent: #3ddc84;
-    --accent-dim: #1f7a4a;
-    --text: #e8eaed;
-    --muted: #8a919e;
-    --danger: #ff5c5c;
-    --border: #262b35;
+    --bg: #0f1115; --card: #171a21; --accent: #3ddc84; --accent-dim: #1f7a4a;
+    --text: #e8eaed; --muted: #8a919e; --danger: #ff5c5c; --border: #262b35;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
+    margin: 0; background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 16px;
-    max-width: 480px;
-    margin: 0 auto;
+    padding: 16px; max-width: 480px; margin: 0 auto;
   }
-  h1 {
-    font-size: 20px;
-    margin: 8px 0 2px;
-  }
-  .subtitle {
-    color: var(--muted);
-    font-size: 13px;
-    margin-bottom: 20px;
-  }
+  h1 { font-size: 20px; margin: 8px 0 2px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
   .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 16px;
-    margin-bottom: 14px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px; margin-bottom: 14px;
   }
-  .status-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-  .dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--danger);
-    flex-shrink: 0;
-  }
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
   .dot.connected { background: var(--accent); }
   #statusText { font-size: 15px; font-weight: 600; }
   #deviceName { color: var(--muted); font-size: 13px; }
-
   button {
-    width: 100%;
-    padding: 14px;
-    border-radius: 10px;
-    border: none;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    margin-top: 8px;
+    width: 100%; padding: 14px; border-radius: 10px; border: none;
+    font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px;
   }
-  .btn-primary {
-    background: var(--accent);
-    color: #06120a;
-  }
-  .btn-primary:disabled {
-    background: #2a2f38;
-    color: var(--muted);
-    cursor: not-allowed;
-  }
-  .btn-secondary {
-    background: #232833;
-    color: var(--text);
-    border: 1px solid var(--border);
-  }
-  .btn-danger {
-    background: transparent;
-    color: var(--danger);
-    border: 1px solid var(--danger);
-  }
-  .grid2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-  h2 {
-    font-size: 14px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0 0 10px;
+  .btn-primary { background: var(--accent); color: #06120a; }
+  .btn-primary:disabled { background: #2a2f38; color: var(--muted); cursor: not-allowed; }
+  .btn-secondary { background: #232833; color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px; }
+  input[type=text] {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--border);
+    background: #0a0c10; color: var(--text); font-size: 15px; margin-bottom: 8px;
   }
   #log {
-    background: #0a0c10;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px;
-    font-family: "SF Mono", Menlo, monospace;
-    font-size: 11px;
-    color: #9fe6b8;
-    height: 160px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
+    background: #0a0c10; border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: #9fe6b8;
+    height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
   }
   .log-line { margin-bottom: 4px; }
   .log-err { color: var(--danger); }
   .log-info { color: var(--muted); }
-  .not-supported {
-    display: none;
-    background: #3a2020;
-    border: 1px solid var(--danger);
-    border-radius: 10px;
-    padding: 14px;
-    font-size: 13px;
-    line-height: 1.5;
-    margin-bottom: 14px;
+  .banner {
+    background: #3a2020; border: 1px solid var(--danger); border-radius: 10px;
+    padding: 14px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; display: none;
   }
+  .navbox { display: none; text-align: center; padding: 20px 10px; }
+  .navbox .icon { font-size: 48px; margin-bottom: 4px; }
+  .navbox .dist { font-size: 32px; font-weight: 700; }
+  .navbox .instr { color: var(--muted); font-size: 14px; margin-top: 6px; min-height: 20px; }
+  .navbox .meta { display: flex; justify-content: space-around; margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .navbox .meta b { color: var(--text); font-size: 16px; display:block; }
 </style>
 </head>
 <body>
 
   <h1>🏍️ AccessBridge</h1>
-  <div class="subtitle">Test console — Suzuki Access-TFT cluster bridge</div>
+  <div class="subtitle">Suzuki Access-TFT ⟷ free live navigation</div>
 
-  <div class="not-supported" id="unsupportedBanner">
+  <div class="banner" id="unsupportedBanner">
     <strong>This browser can't do Bluetooth.</strong><br>
-    Open this page in <strong>Chrome</strong> on your Android phone instead —
-    Safari/iOS and some in-app browsers don't support Web Bluetooth.
+    Open this page in <strong>Chrome</strong> on your Android phone — Safari/iOS
+    and some in-app browsers don't support it.
   </div>
 
   <div class="card">
@@ -150,11 +83,26 @@
     <button class="btn-danger" id="disconnectBtn" style="display:none;">Disconnect</button>
   </div>
 
-  <div class="card" id="actionsCard" style="display:none;">
-    <h2>Handshake</h2>
-    <button class="btn-secondary" id="sendIdentityBtn">Send identity frame</button>
+  <div class="card" id="navCard" style="display:none;">
+    <h2>Navigate</h2>
+    <input type="text" id="destInput" placeholder="Where to? e.g. MG Road, Bengaluru">
+    <button class="btn-primary" id="startNavBtn">Start navigation</button>
+    <button class="btn-danger" id="stopNavBtn" style="display:none;">Stop navigation</button>
 
-    <h2 style="margin-top:18px;">Test navigation frames</h2>
+    <div class="navbox" id="navBox">
+      <div class="icon" id="navIcon">↑</div>
+      <div class="dist" id="navDist">--</div>
+      <div class="instr" id="navInstr"></div>
+      <div class="meta">
+        <div>ETA<br><b id="navEta">--</b></div>
+        <div>Remaining<br><b id="navRemaining">--</b></div>
+        <div>GPS<br><b id="navGpsStatus">--</b></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="testCard" style="display:none;">
+    <h2>Manual test frames</h2>
     <div class="grid2">
       <button class="btn-secondary" data-preset="left">↰ Left, 60m</button>
       <button class="btn-secondary" data-preset="right">↱ Right, 200m</button>
@@ -163,7 +111,8 @@
       <button class="btn-secondary" data-preset="roundabout">⟳ Roundabout, 500m</button>
       <button class="btn-secondary" data-preset="arrive">🏁 Arrived</button>
     </div>
-    <button class="btn-secondary" id="clearIconBtn" style="margin-top:8px;">Clear icon (idle)</button>
+    <button class="btn-secondary" id="sendIdentityBtn" style="margin-top:8px;">Send identity frame</button>
+    <button class="btn-secondary" id="clearIconBtn">Clear icon (idle)</button>
   </div>
 
   <div class="card">
@@ -173,7 +122,7 @@
 
 <script>
 // =====================================================================
-// AccessBridge protocol — mirrors the Kotlin module byte-for-byte.
+// AccessBridge protocol layer (mirrors the Kotlin module byte-for-byte).
 // Checksum validated against 24,997 real captured frames (100% match).
 // =====================================================================
 
@@ -181,18 +130,19 @@ const SERVICE_UUID = '0000fefb-0000-1000-8000-00805f9b34fb';
 const CHAR_WRITE_UUID = '00000001-0000-1000-8000-008025000000';
 const CHAR_NOTIFY_UUID = '00000002-0000-1000-8000-008025000000';
 
-const FRAME_LEN = 30;
-const HEADER = 0xA5;
-const TERMINATOR = 0x7F;
-const PAD = 0xFF;
-
+const FRAME_LEN = 30, HEADER = 0xA5, TERMINATOR = 0x7F, PAD = 0xFF;
 const FrameType = { NAV: 0x31, IDENTITY: 0x36 };
 
 // Ported from ManeuverMap.kt (Access-TFT specific values)
-const ManeuverIcons = {
+const Icon = {
   turnLeft90: 1, slightLeft: 2, sharpLeft: 3,
   turnRight90: 4, slightRight: 5, sharpRight: 6,
   uturn: 7, straight: 8, arrive: 9,
+  keepLeft: 11, keepRight: 12,
+  tJunctionLeft: 13, tJunctionRight: 14,
+  exitLeft: 29, exitRight: 30,
+  mergeLeft: 27, mergeRight: 28,
+  forkLeft: 31, forkRight: 32,
   roundaboutGeneric: 45,
   noManeuver: 46,
 };
@@ -200,43 +150,31 @@ const ManeuverIcons = {
 function checksum(frame) {
   let sum = 0;
   for (let i = 1; i <= 27; i++) sum += frame[i];
-  sum = sum & 0xFF;
-  return (~sum) & 0xFF;
+  return (~(sum & 0xFF)) & 0xFF;
 }
-
 function newFrameBuffer(type) {
   const buf = new Uint8Array(FRAME_LEN).fill(PAD);
   buf[1] = type;
   return buf;
 }
-
 function putAscii(buf, offset, str) {
   for (let i = 0; i < str.length; i++) buf[offset + i] = str.charCodeAt(i);
 }
-
 function finalize(buf) {
-  buf[0] = HEADER;
-  buf[FRAME_LEN - 1] = TERMINATOR;
-  buf[28] = checksum(buf);
+  buf[0] = HEADER; buf[FRAME_LEN - 1] = TERMINATOR; buf[28] = checksum(buf);
   return buf;
 }
-
 function formatDistance(meters) {
-  if (meters < 1000) {
-    return String(meters).padStart(4, '0') + 'M';
-  }
-  const km = meters / 1000.0;
-  // 2-digit whole + 1 decimal, e.g. "18.9K", "04.7K"
+  meters = Math.max(0, Math.round(meters));
+  if (meters < 1000) return String(meters).padStart(4, '0') + 'M';
+  const km = Math.min(meters / 1000.0, 99.9);
   return km.toFixed(1).padStart(4, '0') + 'K';
 }
-
 function formatEta(hour24, minute) {
   const isPm = hour24 >= 12;
-  let h12 = hour24 % 12;
-  if (h12 === 0) h12 = 12;
+  let h12 = hour24 % 12; if (h12 === 0) h12 = 12;
   return String(h12).padStart(2, '0') + String(minute).padStart(2, '0') + (isPm ? 'PM' : 'AM');
 }
-
 function buildNavFrame(iconByte, distanceToTurnM, etaHour24, etaMinute, remainingM, status = '11') {
   const buf = newFrameBuffer(FrameType.NAV);
   buf[2] = iconByte;
@@ -246,150 +184,359 @@ function buildNavFrame(iconByte, distanceToTurnM, etaHour24, etaMinute, remainin
   putAscii(buf, 23, status);
   return finalize(buf);
 }
-
 function buildIdentityFrame(name) {
   const buf = newFrameBuffer(FrameType.IDENTITY);
   const truncated = name.slice(0, 20);
   for (let i = 0; i < 20; i++) buf[2 + i] = i < truncated.length ? truncated.charCodeAt(i) : 0x00;
-  buf[27] = 0x52; // observed constant, meaning unconfirmed
+  buf[27] = 0x52;
   return finalize(buf);
 }
-
 function toHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// =====================================================================
-// UI wiring
-// =====================================================================
+// OSRM maneuver {type, modifier} -> our cluster icon byte.
+// OSRM (Open Source Routing Machine) is what powers this app's directions —
+// free, keyless, no account tied to any one user. See startNavigation().
+function osrmManeuverToIcon(type, modifier) {
+  if (type === 'arrive') return Icon.arrive;
+  if (type === 'depart') return Icon.straight;
+  if (type === 'roundabout' || type === 'rotary' || type === 'roundabout turn'
+      || type === 'exit roundabout' || type === 'exit rotary') return Icon.roundaboutGeneric;
+  if (type === 'merge') return modifier && modifier.includes('right') ? Icon.mergeRight : Icon.mergeLeft;
+  if (type === 'ramp' || type === 'on ramp' || type === 'off ramp') {
+    return modifier && modifier.includes('right') ? Icon.exitRight : Icon.exitLeft;
+  }
+  if (type === 'fork') return modifier && modifier.includes('right') ? Icon.forkRight : Icon.forkLeft;
+  if (type === 'end of road') return modifier && modifier.includes('right') ? Icon.turnRight90 : Icon.turnLeft90;
+  if (type === 'new name' || type === 'continue' || type === 'use lane' || type === 'notification') return Icon.straight;
 
-let device = null;
-let writeChar = null;
+  // type === 'turn' (the common case) — keyed by modifier
+  const byModifier = {
+    'uturn': Icon.uturn,
+    'sharp left': Icon.sharpLeft,
+    'left': Icon.turnLeft90,
+    'slight left': Icon.slightLeft,
+    'straight': Icon.straight,
+    'slight right': Icon.slightRight,
+    'right': Icon.turnRight90,
+    'sharp right': Icon.sharpRight,
+  };
+  return byModifier[modifier] ?? Icon.straight;
+}
 
+function describeManeuver(type, modifier, roadName) {
+  const road = roadName ? ` onto ${roadName}` : '';
+  if (type === 'arrive') return 'Arrive at destination';
+  if (type === 'depart') return `Head out${road}`;
+  if (type.includes('roundabout') || type.includes('rotary')) return `Take the roundabout${road}`;
+  if (type === 'turn' && modifier === 'uturn') return 'Make a U-turn';
+  if (type === 'turn') return `Turn ${modifier || ''}${road}`;
+  if (type === 'merge') return `Merge${road}`;
+  if (type === 'fork') return `Keep ${modifier && modifier.includes('right') ? 'right' : 'left'}${road}`;
+  if (type === 'ramp' || type === 'on ramp' || type === 'off ramp') return `Take the ramp${road}`;
+  return `Continue${road}`;
+}
+
+// =====================================================================
+// Geometry helpers
+// =====================================================================
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// Standard Google/OSRM-compatible encoded-polyline decoder (both use the
+// same polyline algorithm at precision 5).
+function decodePolyline(encoded) {
+  let points = [], index = 0, lat = 0, lng = 0;
+  while (index < encoded.length) {
+    let b, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    points.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return points;
+}
+
+// =====================================================================
+// UI wiring — BLE connect/disconnect
+// =====================================================================
+let device = null, writeChar = null;
 const logEl = document.getElementById('log');
 function log(msg, cls = '') {
   const line = document.createElement('div');
   line.className = 'log-line ' + cls;
-  const t = new Date().toLocaleTimeString();
-  line.textContent = `[${t}] ${msg}`;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
 }
-
 function setConnected(isConnected, name = '') {
-  const dot = document.getElementById('statusDot');
-  const text = document.getElementById('statusText');
-  const nameEl = document.getElementById('deviceName');
-  const connectBtn = document.getElementById('connectBtn');
-  const disconnectBtn = document.getElementById('disconnectBtn');
-  const actionsCard = document.getElementById('actionsCard');
-
-  dot.classList.toggle('connected', isConnected);
-  text.textContent = isConnected ? 'Connected' : 'Not connected';
-  nameEl.textContent = isConnected ? name : '';
-  connectBtn.style.display = isConnected ? 'none' : 'block';
-  disconnectBtn.style.display = isConnected ? 'block' : 'none';
-  actionsCard.style.display = isConnected ? 'block' : 'none';
+  document.getElementById('statusDot').classList.toggle('connected', isConnected);
+  document.getElementById('statusText').textContent = isConnected ? 'Connected' : 'Not connected';
+  document.getElementById('deviceName').textContent = isConnected ? name : '';
+  document.getElementById('connectBtn').style.display = isConnected ? 'none' : 'block';
+  document.getElementById('disconnectBtn').style.display = isConnected ? 'block' : 'none';
+  document.getElementById('navCard').style.display = isConnected ? 'block' : 'none';
+  document.getElementById('testCard').style.display = isConnected ? 'block' : 'none';
+  if (!isConnected) stopNavigation();
 }
-
 async function connect() {
   try {
     log('Requesting device (look for SAS… in the popup)…');
     device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'SAS' }],
-      optionalServices: [SERVICE_UUID],
+      filters: [{ namePrefix: 'SAS' }], optionalServices: [SERVICE_UUID],
     });
-    device.addEventListener('gattserverdisconnected', onDisconnected);
-
+    device.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; log('Disconnected.', 'log-info'); });
     log(`Connecting to ${device.name}…`);
     const server = await device.gatt.connect();
-
-    log('Getting service 0xFEFB…');
     const service = await server.getPrimaryService(SERVICE_UUID);
-
-    log('Getting write characteristic…');
     writeChar = await service.getCharacteristic(CHAR_WRITE_UUID);
-
     try {
       const notifyChar = await service.getCharacteristic(CHAR_NOTIFY_UUID);
       await notifyChar.startNotifications();
-      notifyChar.addEventListener('characteristicvaluechanged', (e) => {
-        const val = new Uint8Array(e.target.value.buffer);
-        log('← notify: ' + toHex(val), 'log-info');
-      });
-      log('Subscribed to notifications.');
-    } catch (e) {
-      log('Notify subscribe skipped: ' + e.message, 'log-info');
-    }
-
+      notifyChar.addEventListener('characteristicvaluechanged', () => {});
+    } catch (e) {}
     setConnected(true, device.name);
-    log('Connected. Ready to send test frames.');
+    log('Connected. Ready.');
   } catch (err) {
     log('Connect failed: ' + err.message, 'log-err');
   }
 }
-
-function onDisconnected() {
-  setConnected(false);
-  writeChar = null;
-  log('Disconnected.', 'log-info');
-}
-
-async function disconnect() {
-  if (device && device.gatt.connected) {
-    device.gatt.disconnect();
-  }
-}
-
+function disconnect() { if (device && device.gatt.connected) device.gatt.disconnect(); }
 async function sendFrame(bytes, label) {
-  if (!writeChar) {
-    log('Not connected.', 'log-err');
-    return;
-  }
+  if (!writeChar) { log('Not connected.', 'log-err'); return; }
   try {
     await writeChar.writeValueWithoutResponse(bytes);
-    log(`→ sent ${label}: ${toHex(bytes)}`);
+    log(`→ ${label}: ${toHex(bytes)}`);
   } catch (err) {
     log(`Write failed (${label}): ${err.message}`, 'log-err');
   }
 }
-
-function currentTime24() {
-  const now = new Date();
-  return { h: now.getHours(), m: now.getMinutes() };
-}
+function currentTime24() { const n = new Date(); return { h: n.getHours(), m: n.getMinutes() }; }
 
 const presets = {
-  left:        () => buildNavFrame(ManeuverIcons.turnLeft90, 60, currentTime24().h, currentTime24().m, 2500),
-  right:       () => buildNavFrame(ManeuverIcons.turnRight90, 200, currentTime24().h, currentTime24().m, 3100),
-  straight:    () => buildNavFrame(ManeuverIcons.straight, 1200, currentTime24().h, currentTime24().m, 5400),
-  uturn:       () => buildNavFrame(ManeuverIcons.uturn, 30, currentTime24().h, currentTime24().m, 900),
-  roundabout:  () => buildNavFrame(ManeuverIcons.roundaboutGeneric, 500, currentTime24().h, currentTime24().m, 1800),
-  arrive:      () => buildNavFrame(ManeuverIcons.arrive, 0, currentTime24().h, currentTime24().m, 0),
+  left:       () => buildNavFrame(Icon.turnLeft90, 60, currentTime24().h, currentTime24().m, 2500),
+  right:      () => buildNavFrame(Icon.turnRight90, 200, currentTime24().h, currentTime24().m, 3100),
+  straight:   () => buildNavFrame(Icon.straight, 1200, currentTime24().h, currentTime24().m, 5400),
+  uturn:      () => buildNavFrame(Icon.uturn, 30, currentTime24().h, currentTime24().m, 900),
+  roundabout: () => buildNavFrame(Icon.roundaboutGeneric, 500, currentTime24().h, currentTime24().m, 1800),
+  arrive:     () => buildNavFrame(Icon.arrive, 0, currentTime24().h, currentTime24().m, 0),
 };
-
 document.getElementById('connectBtn').addEventListener('click', connect);
 document.getElementById('disconnectBtn').addEventListener('click', disconnect);
-document.getElementById('sendIdentityBtn').addEventListener('click', () => {
-  sendFrame(buildIdentityFrame('AccessBridge'), 'identity');
-});
+document.getElementById('sendIdentityBtn').addEventListener('click', () => sendFrame(buildIdentityFrame('AccessBridge'), 'identity'));
 document.getElementById('clearIconBtn').addEventListener('click', () => {
   const t = currentTime24();
-  sendFrame(buildNavFrame(ManeuverIcons.noManeuver, 0, t.h, t.m, 0), 'idle/no-maneuver');
+  sendFrame(buildNavFrame(Icon.noManeuver, 0, t.h, t.m, 0), 'idle');
 });
 document.querySelectorAll('[data-preset]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const key = btn.getAttribute('data-preset');
-    sendFrame(presets[key](), key);
-  });
+  btn.addEventListener('click', () => sendFrame(presets[btn.getAttribute('data-preset')](), btn.getAttribute('data-preset')));
 });
 
+// =====================================================================
+// Live navigation — free, keyless routing via OSRM + Nominatim
+// (OpenStreetMap's public demo services). No API key, no account tied
+// to any one person — works the same for anyone who opens this page.
+// Note: these are shared public demo servers meant for light/personal
+// use, not heavy commercial traffic — fine for a few riders navigating
+// occasionally, not for e.g. thousands of daily users.
+// =====================================================================
+let currentRoute = null;
+let currentStepIndex = 0;
+let watchId = null;
+let lastSendTime = 0;
+const SEND_INTERVAL_MS = 1200;
+const ARRIVAL_THRESHOLD_M = 15;
+const OFF_ROUTE_THRESHOLD_M = 120;
+
+async function geocode(query) {
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Place search failed (network)');
+  const data = await res.json();
+  if (!data.length) throw new Error(`Couldn't find "${query}"`);
+  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+}
+
+async function fetchRoute(origin, dest) {
+  const url = `https://router.project-osrm.org/route/v1/driving/`
+    + `${origin.lng},${origin.lat};${dest.lng},${dest.lat}`
+    + `?steps=true&geometries=polyline&overview=false`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Route request failed (network)');
+  const data = await res.json();
+  if (data.code !== 'Ok') throw new Error('No route found: ' + data.code);
+  return data;
+}
+
+// Build our internal "legs" list from OSRM's raw steps. OSRM's steps[i]
+// describes the maneuver you perform to START segment i; the thing our
+// cluster wants ("distance/icon for the NEXT turn") is therefore
+// steps[i+1]'s maneuver, applied to segment i's geometry. The final
+// OSRM step is always a zero-length 'arrive' step, which becomes the
+// endpoint/icon of the last real leg rather than its own leg.
+function buildRouteFromOsrm(osrmData) {
+  const steps = osrmData.routes[0].legs[0].steps;
+  const legs = [];
+  for (let i = 0; i < steps.length - 1; i++) {
+    const cur = steps[i], next = steps[i + 1];
+    legs.push({
+      iconByte: osrmManeuverToIcon(next.maneuver.type, next.maneuver.modifier),
+      instructions: describeManeuver(next.maneuver.type, next.maneuver.modifier, next.name),
+      points: decodePolyline(cur.geometry),
+      distanceM: cur.distance,
+      durationS: cur.duration,
+      endLat: next.maneuver.location[1],
+      endLng: next.maneuver.location[0],
+    });
+  }
+  return {
+    steps: legs,
+    totalDistanceM: osrmData.routes[0].distance,
+    totalDurationS: osrmData.routes[0].duration,
+  };
+}
+
+function startNavigation() {
+  const dest = document.getElementById('destInput').value.trim();
+  if (!dest) { log('Enter a destination first.', 'log-err'); return; }
+  if (!navigator.geolocation) { log('No GPS available in this browser.', 'log-err'); return; }
+
+  log('Getting your current location…');
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    try {
+      log(`Looking up "${dest}"…`);
+      const destLatLng = await geocode(dest);
+      log('Requesting route…');
+      const osrmData = await fetchRoute(origin, destLatLng);
+      currentRoute = buildRouteFromOsrm(osrmData);
+      currentStepIndex = 0;
+      log(`Route found: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
+      document.getElementById('navBox').style.display = 'block';
+      document.getElementById('startNavBtn').style.display = 'none';
+      document.getElementById('stopNavBtn').style.display = 'block';
+      beginTracking();
+    } catch (err) {
+      log('Navigation failed: ' + err.message, 'log-err');
+    }
+  }, (err) => {
+    log('GPS error: ' + err.message, 'log-err');
+  }, { enableHighAccuracy: true });
+}
+
+function remainingDistanceAndDuration() {
+  let distM = 0, durS = 0;
+  for (let i = currentStepIndex; i < currentRoute.steps.length; i++) {
+    distM += currentRoute.steps[i].distanceM;
+    durS += currentRoute.steps[i].durationS;
+  }
+  return { distM, durS };
+}
+
+function beginTracking() {
+  watchId = navigator.geolocation.watchPosition(onPosition, (err) => {
+    document.getElementById('navGpsStatus').textContent = 'weak';
+    log('GPS: ' + err.message, 'log-err');
+  }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 });
+}
+
+function onPosition(pos) {
+  if (!currentRoute) return;
+  const { latitude: lat, longitude: lng } = pos.coords;
+  document.getElementById('navGpsStatus').textContent = 'good';
+
+  let bestDist = Infinity, bestStep = currentStepIndex;
+  for (let i = currentStepIndex; i < currentRoute.steps.length; i++) {
+    for (const p of currentRoute.steps[i].points) {
+      const d = haversineMeters(lat, lng, p.lat, p.lng);
+      if (d < bestDist) { bestDist = d; bestStep = i; }
+    }
+  }
+  if (bestDist > OFF_ROUTE_THRESHOLD_M) {
+    document.getElementById('navGpsStatus').textContent = 'off-route';
+  }
+  currentStepIndex = Math.max(currentStepIndex, bestStep);
+
+  const step = currentRoute.steps[currentStepIndex];
+  const isLastStep = currentStepIndex === currentRoute.steps.length - 1;
+  const distToStepEnd = haversineMeters(lat, lng, step.endLat, step.endLng);
+
+  if (isLastStep && distToStepEnd < ARRIVAL_THRESHOLD_M) {
+    updateNavUI(Icon.arrive, 0, 0, 'Arrived', 0);
+    throttledSend(buildNavFrame(Icon.arrive, 0, currentTime24().h, currentTime24().m, 0));
+    log('Arrived at destination.');
+    stopNavigation();
+    return;
+  }
+  if (!isLastStep && distToStepEnd < ARRIVAL_THRESHOLD_M) {
+    currentStepIndex++;
+  }
+
+  const { distM: remainingM, durS: remainingS } = remainingDistanceAndDuration();
+  const etaDate = new Date(Date.now() + remainingS * 1000);
+
+  updateNavUI(step.iconByte, distToStepEnd, remainingM, step.instructions, remainingS);
+  throttledSend(buildNavFrame(step.iconByte, distToStepEnd, etaDate.getHours(), etaDate.getMinutes(), remainingM));
+}
+
+function throttledSend(frame) {
+  const now = Date.now();
+  if (now - lastSendTime < SEND_INTERVAL_MS) return;
+  lastSendTime = now;
+  sendFrame(frame, 'nav');
+}
+
+const iconGlyphs = {};
+iconGlyphs[Icon.turnLeft90]='↰'; iconGlyphs[Icon.slightLeft]='↖'; iconGlyphs[Icon.sharpLeft]='↙';
+iconGlyphs[Icon.turnRight90]='↱'; iconGlyphs[Icon.slightRight]='↗'; iconGlyphs[Icon.sharpRight]='↘';
+iconGlyphs[Icon.uturn]='⤺'; iconGlyphs[Icon.straight]='↑'; iconGlyphs[Icon.arrive]='🏁';
+iconGlyphs[Icon.roundaboutGeneric]='⟳'; iconGlyphs[Icon.mergeLeft]='↰'; iconGlyphs[Icon.mergeRight]='↱';
+iconGlyphs[Icon.forkLeft]='↖'; iconGlyphs[Icon.forkRight]='↗';
+
+function formatKmMi(meters) {
+  return meters < 1000 ? `${Math.round(meters)} m` : `${(meters/1000).toFixed(1)} km`;
+}
+function updateNavUI(iconByte, distToTurnM, remainingM, instructions, remainingS) {
+  document.getElementById('navIcon').textContent = iconGlyphs[iconByte] || '•';
+  document.getElementById('navDist').textContent = formatKmMi(distToTurnM);
+  document.getElementById('navInstr').textContent = instructions;
+  document.getElementById('navRemaining').textContent = formatKmMi(remainingM);
+  const eta = new Date(Date.now() + remainingS * 1000);
+  document.getElementById('navEta').textContent = eta.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function stopNavigation() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  currentRoute = null;
+  document.getElementById('navBox').style.display = 'none';
+  document.getElementById('startNavBtn').style.display = 'block';
+  document.getElementById('stopNavBtn').style.display = 'none';
+}
+document.getElementById('startNavBtn').addEventListener('click', startNavigation);
+document.getElementById('stopNavBtn').addEventListener('click', () => {
+  stopNavigation();
+  const t = currentTime24();
+  sendFrame(buildNavFrame(Icon.noManeuver, 0, t.h, t.m, 0), 'idle');
+  log('Navigation stopped.');
+});
+
+// =====================================================================
+// Boot
+// =====================================================================
 if (!navigator.bluetooth) {
   document.getElementById('unsupportedBanner').style.display = 'block';
   document.getElementById('connectBtn').disabled = true;
   log('Web Bluetooth not available in this browser.', 'log-err');
 } else {
-  log('Ready. Tap "Connect to bike" (bike must be powered on, Ride Connect app closed).');
+  log('Ready. Tap "Connect to bike" (bike powered on, Ride Connect app closed).');
 }
 </script>
 </body>
