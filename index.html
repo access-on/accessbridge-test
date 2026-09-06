@@ -52,7 +52,9 @@
     background: #3a2020; border: 1px solid var(--danger); border-radius: 10px;
     padding: 14px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; display: none;
   }
-  .navbox { display: none; text-align: center; padding: 20px 10px; }
+  .navbox {
+    display: none; text-align: center; padding: 20px 10px;
+  }
   .navbox .icon { font-size: 48px; margin-bottom: 4px; }
   .navbox .dist { font-size: 32px; font-weight: 700; }
   .navbox .instr { color: var(--muted); font-size: 14px; margin-top: 6px; min-height: 20px; }
@@ -63,12 +65,18 @@
 <body>
 
   <h1>🏍️ AccessBridge</h1>
-  <div class="subtitle">Suzuki Access-TFT ⟷ free live navigation</div>
+  <div class="subtitle">Suzuki Access-TFT ⟷ Google Maps bridge</div>
 
   <div class="banner" id="unsupportedBanner">
     <strong>This browser can't do Bluetooth.</strong><br>
     Open this page in <strong>Chrome</strong> on your Android phone — Safari/iOS
     and some in-app browsers don't support it.
+  </div>
+  <div class="banner" id="keyBanner">
+    <strong>No Google Maps key set.</strong><br>
+    Edit this file, find <code>GOOGLE_MAPS_API_KEY</code> near the top of the
+    &lt;script&gt;, and paste your key between the quotes. See the README for
+    how to get one.
   </div>
 
   <div class="card">
@@ -121,6 +129,12 @@
   </div>
 
 <script>
+// =====================================================================
+// >>> SET YOUR GOOGLE MAPS API KEY HERE <<<
+// See README.md for how to get one. This is the ONLY line you need to edit.
+const GOOGLE_MAPS_API_KEY = "AIzaSyC2Xst_VRtp9hsRMXG5FeueqkBjT97e54U";
+// =====================================================================
+
 // =====================================================================
 // AccessBridge protocol layer (mirrors the Kotlin module byte-for-byte).
 // Checksum validated against 24,997 real captured frames (100% match).
@@ -195,47 +209,29 @@ function toHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// OSRM maneuver {type, modifier} -> our cluster icon byte.
-// OSRM (Open Source Routing Machine) is what powers this app's directions —
-// free, keyless, no account tied to any one user. See startNavigation().
-function osrmManeuverToIcon(type, modifier) {
-  if (type === 'arrive') return Icon.arrive;
-  if (type === 'depart') return Icon.straight;
-  if (type === 'roundabout' || type === 'rotary' || type === 'roundabout turn'
-      || type === 'exit roundabout' || type === 'exit rotary') return Icon.roundaboutGeneric;
-  if (type === 'merge') return modifier && modifier.includes('right') ? Icon.mergeRight : Icon.mergeLeft;
-  if (type === 'ramp' || type === 'on ramp' || type === 'off ramp') {
-    return modifier && modifier.includes('right') ? Icon.exitRight : Icon.exitLeft;
-  }
-  if (type === 'fork') return modifier && modifier.includes('right') ? Icon.forkRight : Icon.forkLeft;
-  if (type === 'end of road') return modifier && modifier.includes('right') ? Icon.turnRight90 : Icon.turnLeft90;
-  if (type === 'new name' || type === 'continue' || type === 'use lane' || type === 'notification') return Icon.straight;
-
-  // type === 'turn' (the common case) — keyed by modifier
-  const byModifier = {
-    'uturn': Icon.uturn,
-    'sharp left': Icon.sharpLeft,
-    'left': Icon.turnLeft90,
-    'slight left': Icon.slightLeft,
+// Google Directions maneuver string -> our cluster icon byte
+function googleManeuverToIcon(maneuver) {
+  const m = {
+    'turn-left': Icon.turnLeft90,
+    'turn-slight-left': Icon.slightLeft,
+    'turn-sharp-left': Icon.sharpLeft,
+    'turn-right': Icon.turnRight90,
+    'turn-slight-right': Icon.slightRight,
+    'turn-sharp-right': Icon.sharpRight,
+    'uturn-left': Icon.uturn,
+    'uturn-right': Icon.uturn,
     'straight': Icon.straight,
-    'slight right': Icon.slightRight,
-    'right': Icon.turnRight90,
-    'sharp right': Icon.sharpRight,
+    'ramp-left': Icon.exitLeft,
+    'ramp-right': Icon.exitRight,
+    'merge': Icon.mergeLeft,
+    'fork-left': Icon.forkLeft,
+    'fork-right': Icon.forkRight,
+    'roundabout-left': Icon.roundaboutGeneric,
+    'roundabout-right': Icon.roundaboutGeneric,
+    'keep-left': Icon.keepLeft,
+    'keep-right': Icon.keepRight,
   };
-  return byModifier[modifier] ?? Icon.straight;
-}
-
-function describeManeuver(type, modifier, roadName) {
-  const road = roadName ? ` onto ${roadName}` : '';
-  if (type === 'arrive') return 'Arrive at destination';
-  if (type === 'depart') return `Head out${road}`;
-  if (type.includes('roundabout') || type.includes('rotary')) return `Take the roundabout${road}`;
-  if (type === 'turn' && modifier === 'uturn') return 'Make a U-turn';
-  if (type === 'turn') return `Turn ${modifier || ''}${road}`;
-  if (type === 'merge') return `Merge${road}`;
-  if (type === 'fork') return `Keep ${modifier && modifier.includes('right') ? 'right' : 'left'}${road}`;
-  if (type === 'ramp' || type === 'on ramp' || type === 'off ramp') return `Take the ramp${road}`;
-  return `Continue${road}`;
+  return m[maneuver] ?? Icon.straight; // unrecognized -> straight, never leave it blank mid-route
 }
 
 // =====================================================================
@@ -249,8 +245,7 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// Standard Google/OSRM-compatible encoded-polyline decoder (both use the
-// same polyline algorithm at precision 5).
+// Standard Google encoded-polyline decoder
 function decodePolyline(encoded) {
   let points = [], index = 0, lat = 0, lng = 0;
   while (index < encoded.length) {
@@ -341,95 +336,122 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
 });
 
 // =====================================================================
-// Live navigation — free, keyless routing via OSRM + Nominatim
-// (OpenStreetMap's public demo services). No API key, no account tied
-// to any one person — works the same for anyone who opens this page.
-// Note: these are shared public demo servers meant for light/personal
-// use, not heavy commercial traffic — fine for a few riders navigating
-// occasionally, not for e.g. thousands of daily users.
+// Live navigation
 // =====================================================================
-let currentRoute = null;
+let directionsService = null;
+let currentRoute = null;    // { steps: [{ iconByte, instructions, points:[{lat,lng}], distanceM, durationS }], totalDistanceM, totalDurationS }
 let currentStepIndex = 0;
 let watchId = null;
 let lastSendTime = 0;
-const SEND_INTERVAL_MS = 1200;
+let lastDestinationText = null;   // kept so we can re-request a route on reroute
+let offRouteSince = null;         // timestamp when off-route condition started, null = currently on-route
+let lastRerouteTime = 0;
+let isRerouting = false;
+let lastGpsUpdateTime = 0;
+let staleGpsCheckInterval = null;
+
+const SEND_INTERVAL_MS = 1200;      // roughly matches OEM app's ~1Hz cadence
 const ARRIVAL_THRESHOLD_M = 15;
-const OFF_ROUTE_THRESHOLD_M = 120;
+const OFF_ROUTE_THRESHOLD_M = 120;  // how far from the route counts as "off it"
+const OFF_ROUTE_CONFIRM_MS = 8000;  // must be off-route this long before we trust it (avoids GPS-jitter false triggers)
+const REROUTE_COOLDOWN_MS = 15000;  // don't reroute more than once per this window
+const STALE_GPS_MS = 10000;         // warn if no GPS fix for this long while navigating
 
-async function geocode(query) {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Place search failed (network)');
-  const data = await res.json();
-  if (!data.length) throw new Error(`Couldn't find "${query}"`);
-  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+function mapsScriptLoaded() {
+  directionsService = new google.maps.DirectionsService();
+  document.getElementById('keyBanner').style.display = 'none';
+  log('Google Maps loaded.', 'log-info');
 }
-
-async function fetchRoute(origin, dest) {
-  const url = `https://router.project-osrm.org/route/v1/driving/`
-    + `${origin.lng},${origin.lat};${dest.lng},${dest.lat}`
-    + `?steps=true&geometries=polyline&overview=false`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Route request failed (network)');
-  const data = await res.json();
-  if (data.code !== 'Ok') throw new Error('No route found: ' + data.code);
-  return data;
-}
-
-// Build our internal "legs" list from OSRM's raw steps. OSRM's steps[i]
-// describes the maneuver you perform to START segment i; the thing our
-// cluster wants ("distance/icon for the NEXT turn") is therefore
-// steps[i+1]'s maneuver, applied to segment i's geometry. The final
-// OSRM step is always a zero-length 'arrive' step, which becomes the
-// endpoint/icon of the last real leg rather than its own leg.
-function buildRouteFromOsrm(osrmData) {
-  const steps = osrmData.routes[0].legs[0].steps;
-  const legs = [];
-  for (let i = 0; i < steps.length - 1; i++) {
-    const cur = steps[i], next = steps[i + 1];
-    legs.push({
-      iconByte: osrmManeuverToIcon(next.maneuver.type, next.maneuver.modifier),
-      instructions: describeManeuver(next.maneuver.type, next.maneuver.modifier, next.name),
-      points: decodePolyline(cur.geometry),
-      distanceM: cur.distance,
-      durationS: cur.duration,
-      endLat: next.maneuver.location[1],
-      endLng: next.maneuver.location[0],
-    });
+function loadGoogleMapsScript() {
+  if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === 'PASTE_YOUR_KEY_HERE') {
+    document.getElementById('keyBanner').style.display = 'block';
+    return;
   }
+  const s = document.createElement('script');
+  s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&callback=mapsScriptLoaded`;
+  s.async = true;
+  document.head.appendChild(s);
+}
+window.mapsScriptLoaded = mapsScriptLoaded;
+
+function buildRouteFromResult(result, originLatLng) {
+  const leg = result.routes[0].legs[0];
+  const steps = leg.steps.map(s => ({
+    iconByte: googleManeuverToIcon(s.maneuver || ''),
+    instructions: s.instructions.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    points: decodePolyline(s.polyline.points),
+    distanceM: s.distance.value,
+    durationS: s.duration.value,
+    endLat: s.end_location.lat(), endLng: s.end_location.lng(),
+  }));
   return {
-    steps: legs,
-    totalDistanceM: osrmData.routes[0].distance,
-    totalDurationS: osrmData.routes[0].duration,
+    steps,
+    totalDistanceM: leg.distance.value,
+    totalDurationS: leg.duration.value,
   };
 }
 
 function startNavigation() {
   const dest = document.getElementById('destInput').value.trim();
   if (!dest) { log('Enter a destination first.', 'log-err'); return; }
+  if (!directionsService) { log('Google Maps not ready yet (check API key).', 'log-err'); return; }
   if (!navigator.geolocation) { log('No GPS available in this browser.', 'log-err'); return; }
 
+  lastDestinationText = dest;
   log('Getting your current location…');
-  navigator.geolocation.getCurrentPosition(async (pos) => {
+  navigator.geolocation.getCurrentPosition((pos) => {
     const origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    try {
-      log(`Looking up "${dest}"…`);
-      const destLatLng = await geocode(dest);
-      log('Requesting route…');
-      const osrmData = await fetchRoute(origin, destLatLng);
-      currentRoute = buildRouteFromOsrm(osrmData);
-      currentStepIndex = 0;
-      log(`Route found: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
+    requestRoute(origin, dest, /*isReroute=*/false, () => {
       document.getElementById('navBox').style.display = 'block';
       document.getElementById('startNavBtn').style.display = 'none';
       document.getElementById('stopNavBtn').style.display = 'block';
       beginTracking();
-    } catch (err) {
-      log('Navigation failed: ' + err.message, 'log-err');
-    }
+      startStaleGpsWatchdog();
+    });
   }, (err) => {
     log('GPS error: ' + err.message, 'log-err');
   }, { enableHighAccuracy: true });
+}
+
+/** Shared by the initial route request and any later reroute. */
+function requestRoute(origin, dest, isReroute, onSuccess) {
+  log(isReroute ? 'Rerouting…' : 'Requesting route…');
+  directionsService.route({
+    origin, destination: dest, travelMode: google.maps.TravelMode.DRIVING,
+  }, (result, status) => {
+    if (status !== 'OK') {
+      log('Directions request failed: ' + status, 'log-err');
+      if (isReroute) isRerouting = false; // let a future off-route event try again
+      return;
+    }
+    currentRoute = buildRouteFromResult(result, origin);
+    currentStepIndex = 0;
+    offRouteSince = null;
+    isRerouting = false;
+    log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
+    onSuccess();
+  });
+}
+
+function triggerReroute(lat, lng) {
+  if (isRerouting || !lastDestinationText) return;
+  isRerouting = true;
+  lastRerouteTime = Date.now();
+  const t = currentTime24();
+  // Blank the cluster's icon while we recompute, rather than leave a stale/wrong arrow showing.
+  sendFrame(buildNavFrame(Icon.noManeuver, 0, t.h, t.m, 0), 'recalculating');
+  document.getElementById('navInstr').textContent = 'Recalculating…';
+  requestRoute({ lat, lng }, lastDestinationText, /*isReroute=*/true, () => {});
+}
+
+function startStaleGpsWatchdog() {
+  lastGpsUpdateTime = Date.now();
+  staleGpsCheckInterval = setInterval(() => {
+    if (!currentRoute) return;
+    if (Date.now() - lastGpsUpdateTime > STALE_GPS_MS) {
+      document.getElementById('navGpsStatus').textContent = 'lost';
+    }
+  }, 2000);
 }
 
 function remainingDistanceAndDuration() {
@@ -443,16 +465,27 @@ function remainingDistanceAndDuration() {
 
 function beginTracking() {
   watchId = navigator.geolocation.watchPosition(onPosition, (err) => {
-    document.getElementById('navGpsStatus').textContent = 'weak';
-    log('GPS: ' + err.message, 'log-err');
+    // PERMISSION_DENIED (1): nothing we can do without the user re-granting access — stop cleanly.
+    // POSITION_UNAVAILABLE (2) / TIMEOUT (3): transient, keep watching, just flag it on screen.
+    if (err.code === 1) {
+      document.getElementById('navGpsStatus').textContent = 'denied';
+      log('Location permission denied — navigation stopped.', 'log-err');
+      stopNavigation();
+    } else {
+      document.getElementById('navGpsStatus').textContent = 'weak';
+      log('GPS: ' + err.message, 'log-err');
+    }
   }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 });
 }
 
 function onPosition(pos) {
-  if (!currentRoute) return;
+  if (!currentRoute || isRerouting) { lastGpsUpdateTime = Date.now(); return; }
   const { latitude: lat, longitude: lng } = pos.coords;
+  lastGpsUpdateTime = Date.now();
   document.getElementById('navGpsStatus').textContent = 'good';
 
+  // Find the closest point across current-and-later steps; advance step index
+  // monotonically (never regress) so GPS jitter doesn't send us backwards.
   let bestDist = Infinity, bestStep = currentStepIndex;
   for (let i = currentStepIndex; i < currentRoute.steps.length; i++) {
     for (const p of currentRoute.steps[i].points) {
@@ -460,15 +493,28 @@ function onPosition(pos) {
       if (d < bestDist) { bestDist = d; bestStep = i; }
     }
   }
+
   if (bestDist > OFF_ROUTE_THRESHOLD_M) {
     document.getElementById('navGpsStatus').textContent = 'off-route';
+    if (offRouteSince === null) offRouteSince = Date.now();
+    const sustainedLongEnough = Date.now() - offRouteSince > OFF_ROUTE_CONFIRM_MS;
+    const cooldownElapsed = Date.now() - lastRerouteTime > REROUTE_COOLDOWN_MS;
+    if (sustainedLongEnough && cooldownElapsed) {
+      log(`Off route for ${Math.round((Date.now()-offRouteSince)/1000)}s — recalculating.`);
+      triggerReroute(lat, lng);
+      return;
+    }
+  } else {
+    offRouteSince = null;
   }
+
   currentStepIndex = Math.max(currentStepIndex, bestStep);
 
   const step = currentRoute.steps[currentStepIndex];
   const isLastStep = currentStepIndex === currentRoute.steps.length - 1;
   const distToStepEnd = haversineMeters(lat, lng, step.endLat, step.endLng);
 
+  // Arrival check
   if (isLastStep && distToStepEnd < ARRIVAL_THRESHOLD_M) {
     updateNavUI(Icon.arrive, 0, 0, 'Arrived', 0);
     throttledSend(buildNavFrame(Icon.arrive, 0, currentTime24().h, currentTime24().m, 0));
@@ -476,12 +522,15 @@ function onPosition(pos) {
     stopNavigation();
     return;
   }
+
+  // Advance past a completed (non-last) step once very close to its end
   if (!isLastStep && distToStepEnd < ARRIVAL_THRESHOLD_M) {
     currentStepIndex++;
   }
 
   const { distM: remainingM, durS: remainingS } = remainingDistanceAndDuration();
-  const etaDate = new Date(Date.now() + remainingS * 1000);
+  const now = new Date();
+  const etaDate = new Date(now.getTime() + remainingS * 1000);
 
   updateNavUI(step.iconByte, distToStepEnd, remainingM, step.instructions, remainingS);
   throttledSend(buildNavFrame(step.iconByte, distToStepEnd, etaDate.getHours(), etaDate.getMinutes(), remainingM));
@@ -515,7 +564,11 @@ function updateNavUI(iconByte, distToTurnM, remainingM, instructions, remainingS
 
 function stopNavigation() {
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (staleGpsCheckInterval !== null) { clearInterval(staleGpsCheckInterval); staleGpsCheckInterval = null; }
   currentRoute = null;
+  lastDestinationText = null;
+  offRouteSince = null;
+  isRerouting = false;
   document.getElementById('navBox').style.display = 'none';
   document.getElementById('startNavBtn').style.display = 'block';
   document.getElementById('stopNavBtn').style.display = 'none';
@@ -538,6 +591,7 @@ if (!navigator.bluetooth) {
 } else {
   log('Ready. Tap "Connect to bike" (bike powered on, Ride Connect app closed).');
 }
+loadGoogleMapsScript();
 </script>
 </body>
 </html>
