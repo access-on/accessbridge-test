@@ -34,6 +34,11 @@
   .btn-primary:disabled { background: #2a2f38; color: var(--muted); cursor: not-allowed; }
   .btn-secondary { background: #232833; color: var(--text); border: 1px solid var(--border); }
   .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  .btn-choice {
+    background: #1a2e22; color: var(--text); border: 1px solid var(--accent-dim);
+    text-align: left; font-weight: 500; font-size: 14px;
+  }
+  .btn-choice b { color: var(--accent); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px; }
   input[type=text] {
@@ -52,14 +57,18 @@
     background: #3a2020; border: 1px solid var(--danger); border-radius: 10px;
     padding: 14px; font-size: 13px; line-height: 1.5; margin-bottom: 14px; display: none;
   }
+  /* #8: bigger, more dominant driving screen */
   .navbox {
-    display: none; text-align: center; padding: 20px 10px;
+    display: none; text-align: center; padding: 22px 10px;
+    background: linear-gradient(180deg, #16241c, var(--card));
+    border-radius: 14px; border: 1px solid var(--accent-dim);
   }
-  .navbox .icon { font-size: 48px; margin-bottom: 4px; }
-  .navbox .dist { font-size: 32px; font-weight: 700; }
-  .navbox .instr { color: var(--muted); font-size: 14px; margin-top: 6px; min-height: 20px; }
-  .navbox .meta { display: flex; justify-content: space-around; margin-top: 14px; font-size: 13px; color: var(--muted); }
-  .navbox .meta b { color: var(--text); font-size: 16px; display:block; }
+  .navbox .icon { font-size: 72px; line-height: 1; margin-bottom: 2px; }
+  .navbox .dist { font-size: 46px; font-weight: 800; letter-spacing: -0.02em; }
+  .navbox .instr { color: var(--text); font-size: 16px; margin-top: 8px; min-height: 22px; font-weight: 500; }
+  .navbox .meta { display: flex; justify-content: space-around; margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .navbox .meta b { color: var(--text); font-size: 17px; display:block; }
+  .choice-list { margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -97,6 +106,11 @@
     <button class="btn-primary" id="startNavBtn">Start navigation</button>
     <button class="btn-danger" id="stopNavBtn" style="display:none;">Stop navigation</button>
 
+    <!-- #6: destination disambiguation -->
+    <div id="destChoices" class="choice-list" style="display:none;"></div>
+    <!-- #7: route alternatives -->
+    <div id="routeChoices" class="choice-list" style="display:none;"></div>
+
     <div class="navbox" id="navBox">
       <div class="icon" id="navIcon">↑</div>
       <div class="dist" id="navDist">--</div>
@@ -126,6 +140,7 @@
   <div class="card">
     <h2>Log</h2>
     <div id="log"></div>
+    <button class="btn-secondary" id="copyLogBtn">📋 Copy logs</button>
   </div>
 
 <script>
@@ -260,17 +275,53 @@ function decodePolyline(encoded) {
   return points;
 }
 
+// #5: merge trivially short legs into the following leg, so a real
+// upcoming turn starts counting down earlier instead of a short "go
+// straight for 80m" hiding what comes right after it. The merged leg
+// keeps the LATER leg's icon/instructions (that's the maneuver actually
+// coming up) but combines both legs' distance/duration/points so
+// distance-tracking across the merged span still works correctly.
+const SHORT_LEG_MERGE_THRESHOLD_M = 50;
+function mergeShortLegs(legs, thresholdM = SHORT_LEG_MERGE_THRESHOLD_M) {
+  if (legs.length <= 1) return legs;
+  const merged = [];
+  let i = 0;
+  while (i < legs.length) {
+    let combined = legs[i];
+    // Keep folding in the NEXT leg while the current combined leg is still
+    // short and there's something after it to fold in.
+    while (combined.distanceM < thresholdM && i + 1 < legs.length) {
+      const next = legs[i + 1];
+      combined = {
+        iconByte: next.iconByte,
+        instructions: next.instructions,
+        points: combined.points.concat(next.points),
+        distanceM: combined.distanceM + next.distanceM,
+        durationS: combined.durationS + next.durationS,
+        endLat: next.endLat, endLng: next.endLng,
+      };
+      i++;
+    }
+    merged.push(combined);
+    i++;
+  }
+  return merged;
+}
+
 // =====================================================================
 // UI wiring — BLE connect/disconnect
 // =====================================================================
 let device = null, writeChar = null;
 const logEl = document.getElementById('log');
+let logLines = []; // #9: plain-text copy, kept in parallel to the DOM so Copy Logs doesn't depend on scraping rendered nodes
 function log(msg, cls = '') {
   const line = document.createElement('div');
   line.className = 'log-line ' + cls;
-  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  const text = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  line.textContent = text;
   logEl.appendChild(line);
   logEl.scrollTop = logEl.scrollHeight;
+  logLines.push(text);
 }
 function setConnected(isConnected, name = '') {
   document.getElementById('statusDot').classList.toggle('connected', isConnected);
@@ -300,6 +351,11 @@ async function connect() {
     } catch (e) {}
     setConnected(true, device.name);
     log('Connected. Ready.');
+    // #1 FIX: send the handshake/identity frame automatically, right away —
+    // previously this only fired from the manual test button, which meant
+    // the cluster likely never "opened" a display session for anything we
+    // sent before a human happened to tap that button.
+    await sendFrame(buildIdentityFrame('AccessBridge'), 'identity');
   } catch (err) {
     log('Connect failed: ' + err.message, 'log-err');
   }
@@ -335,20 +391,39 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
   btn.addEventListener('click', () => sendFrame(presets[btn.getAttribute('data-preset')](), btn.getAttribute('data-preset')));
 });
 
+// #9: Copy Logs
+document.getElementById('copyLogBtn').addEventListener('click', async () => {
+  const text = logLines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copyLogBtn');
+    const original = btn.textContent;
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  } catch (err) {
+    log('Copy failed: ' + err.message, 'log-err');
+  }
+});
+
 // =====================================================================
 // Live navigation
 // =====================================================================
 let directionsService = null;
-let currentRoute = null;    // { steps: [{ iconByte, instructions, points:[{lat,lng}], distanceM, durationS }], totalDistanceM, totalDurationS }
+let geocoder = null;
+let currentRoute = null;          // { steps:[{iconByte,instructions,points,distanceM,durationS,endLat,endLng}], totalDistanceM, totalDurationS }
 let currentStepIndex = 0;
 let watchId = null;
 let lastSendTime = 0;
-let lastDestinationText = null;   // kept so we can re-request a route on reroute
-let offRouteSince = null;         // timestamp when off-route condition started, null = currently on-route
+let lastDestinationLatLng = null; // resolved destination coords, reused for reroutes (never re-prompt disambiguation mid-ride)
+let offRouteSince = null;
 let lastRerouteTime = 0;
 let isRerouting = false;
 let lastGpsUpdateTime = 0;
 let staleGpsCheckInterval = null;
+let navRequestInProgress = false; // #2: guards against double-starting
+let wakeLock = null;              // #4
+let heartbeatInterval = null;     // #10
+let lastSentNavParams = null;     // #10: {iconByte, distToTurnM, remainingM} most recently computed, resent on heartbeat
 
 const SEND_INTERVAL_MS = 1200;      // roughly matches OEM app's ~1Hz cadence
 const ARRIVAL_THRESHOLD_M = 15;
@@ -356,9 +431,13 @@ const OFF_ROUTE_THRESHOLD_M = 120;  // how far from the route counts as "off it"
 const OFF_ROUTE_CONFIRM_MS = 8000;  // must be off-route this long before we trust it (avoids GPS-jitter false triggers)
 const REROUTE_COOLDOWN_MS = 15000;  // don't reroute more than once per this window
 const STALE_GPS_MS = 10000;         // warn if no GPS fix for this long while navigating
+const MAX_DEST_CANDIDATES = 4;
+const ROUTE_RETRY_STATUSES = new Set(['NOT_FOUND', 'UNKNOWN_ERROR']); // #3: worth a quiet retry
+const ROUTE_MAX_RETRIES = 2;
 
 function mapsScriptLoaded() {
   directionsService = new google.maps.DirectionsService();
+  geocoder = new google.maps.Geocoder();
   document.getElementById('keyBanner').style.display = 'none';
   log('Google Maps loaded.', 'log-info');
 }
@@ -374,9 +453,9 @@ function loadGoogleMapsScript() {
 }
 window.mapsScriptLoaded = mapsScriptLoaded;
 
-function buildRouteFromResult(result, originLatLng) {
-  const leg = result.routes[0].legs[0];
-  const steps = leg.steps.map(s => ({
+function buildRouteFromResult(result, routeIndex) {
+  const leg = result.routes[routeIndex].legs[0];
+  const rawSteps = leg.steps.map(s => ({
     iconByte: googleManeuverToIcon(s.maneuver || ''),
     instructions: s.instructions.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
     points: decodePolyline(s.polyline.points),
@@ -385,64 +464,198 @@ function buildRouteFromResult(result, originLatLng) {
     endLat: s.end_location.lat(), endLng: s.end_location.lng(),
   }));
   return {
-    steps,
+    steps: mergeShortLegs(rawSteps),
     totalDistanceM: leg.distance.value,
     totalDurationS: leg.duration.value,
   };
 }
 
-function startNavigation() {
-  const dest = document.getElementById('destInput').value.trim();
-  if (!dest) { log('Enter a destination first.', 'log-err'); return; }
-  if (!directionsService) { log('Google Maps not ready yet (check API key).', 'log-err'); return; }
-  if (!navigator.geolocation) { log('No GPS available in this browser.', 'log-err'); return; }
-
-  lastDestinationText = dest;
-  log('Getting your current location…');
-  navigator.geolocation.getCurrentPosition((pos) => {
-    const origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-    requestRoute(origin, dest, /*isReroute=*/false, () => {
-      document.getElementById('navBox').style.display = 'block';
-      document.getElementById('startNavBtn').style.display = 'none';
-      document.getElementById('stopNavBtn').style.display = 'block';
-      beginTracking();
-      startStaleGpsWatchdog();
-    });
-  }, (err) => {
-    log('GPS error: ' + err.message, 'log-err');
-  }, { enableHighAccuracy: true });
-}
-
-/** Shared by the initial route request and any later reroute. */
-function requestRoute(origin, dest, isReroute, onSuccess) {
-  log(isReroute ? 'Rerouting…' : 'Requesting route…');
-  directionsService.route({
-    origin, destination: dest, travelMode: google.maps.TravelMode.DRIVING,
-  }, (result, status) => {
-    if (status !== 'OK') {
-      log('Directions request failed: ' + status, 'log-err');
-      if (isReroute) isRerouting = false; // let a future off-route event try again
+// #3: small helper — retry a couple of times on transient-looking directions
+// failures before giving up, since we saw NOT_FOUND clear up on its own on
+// a real ride after a couple of seconds.
+function routeRequestWithRetry(request, callback, retriesLeft = ROUTE_MAX_RETRIES) {
+  directionsService.route(request, (result, status) => {
+    if (status !== 'OK' && ROUTE_RETRY_STATUSES.has(status) && retriesLeft > 0) {
+      log(`Directions returned ${status}, retrying… (${retriesLeft} left)`, 'log-info');
+      setTimeout(() => routeRequestWithRetry(request, callback, retriesLeft - 1), 1000);
       return;
     }
-    currentRoute = buildRouteFromResult(result, origin);
-    currentStepIndex = 0;
-    offRouteSince = null;
-    isRerouting = false;
-    log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
-    onSuccess();
+    callback(result, status);
   });
 }
 
+function resetNavRequestState() {
+  navRequestInProgress = false;
+  document.getElementById('startNavBtn').disabled = false;
+}
+
+function clearChoiceLists() {
+  const d = document.getElementById('destChoices'), r = document.getElementById('routeChoices');
+  d.style.display = 'none'; d.innerHTML = '';
+  r.style.display = 'none'; r.innerHTML = '';
+}
+
+// #2: entry point, guarded against double-taps
+function startNavigation() {
+  if (navRequestInProgress) return;
+  const dest = document.getElementById('destInput').value.trim();
+  if (!dest) { log('Enter a destination first.', 'log-err'); return; }
+  if (!directionsService || !geocoder) { log('Google Maps not ready yet (check API key).', 'log-err'); return; }
+  if (!navigator.geolocation) { log('No GPS available in this browser.', 'log-err'); return; }
+
+  navRequestInProgress = true;
+  document.getElementById('startNavBtn').disabled = true;
+  clearChoiceLists();
+
+  log('Getting your current location…');
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    log(`Looking up "${dest}"…`);
+    geocoder.geocode({ address: dest }, (results, status) => {
+      if (status !== 'OK' || !results.length) {
+        log('Could not find that place: ' + status, 'log-err');
+        resetNavRequestState();
+        return;
+      }
+      const candidates = results.slice(0, MAX_DEST_CANDIDATES);
+      if (candidates.length === 1) {
+        resolveDestination(origin, candidates[0]);
+      } else {
+        showDestinationChoices(origin, candidates);
+      }
+    });
+  }, (err) => {
+    log('GPS error: ' + err.message, 'log-err');
+    resetNavRequestState();
+  }, { enableHighAccuracy: true });
+}
+
+// #6: destination disambiguation
+function showDestinationChoices(origin, candidates) {
+  const container = document.getElementById('destChoices');
+  container.innerHTML = '';
+  candidates.forEach((c) => {
+    const btn = document.createElement('button');
+    btn.className = 'btn-choice';
+    btn.textContent = c.formatted_address;
+    btn.addEventListener('click', () => {
+      clearChoiceLists();
+      resolveDestination(origin, c);
+    });
+    container.appendChild(btn);
+  });
+  container.style.display = 'block';
+  log(`Found ${candidates.length} matches — pick one above.`);
+  resetNavRequestState(); // re-enable Start button; the tap on a choice continues the flow
+}
+
+function resolveDestination(origin, geocodeResult) {
+  navRequestInProgress = true;
+  document.getElementById('startNavBtn').disabled = true;
+  const destLatLng = { lat: geocodeResult.geometry.location.lat(), lng: geocodeResult.geometry.location.lng() };
+  lastDestinationLatLng = destLatLng;
+  log('Requesting route…');
+  routeRequestWithRetry({
+    origin, destination: destLatLng, travelMode: google.maps.TravelMode.DRIVING,
+    provideRouteAlternatives: true,
+  }, (result, status) => {
+    if (status !== 'OK') {
+      log('Directions request failed: ' + status, 'log-err');
+      resetNavRequestState();
+      return;
+    }
+    if (result.routes.length > 1) {
+      showRouteChoices(origin, result);
+    } else {
+      finalizeRoute(origin, result, 0, /*isReroute=*/false);
+    }
+  });
+}
+
+// #7: route alternatives
+function showRouteChoices(origin, result) {
+  const container = document.getElementById('routeChoices');
+  container.innerHTML = '';
+  result.routes.forEach((r, i) => {
+    const leg = r.legs[0];
+    const btn = document.createElement('button');
+    btn.className = 'btn-choice';
+    btn.innerHTML = `<b>${leg.distance.text}, ${leg.duration.text}</b> — ${r.summary || 'Route ' + (i + 1)}`;
+    btn.addEventListener('click', () => {
+      clearChoiceLists();
+      finalizeRoute(origin, result, i, /*isReroute=*/false);
+    });
+    container.appendChild(btn);
+  });
+  container.style.display = 'block';
+  log(`${result.routes.length} route options — pick one above.`);
+  resetNavRequestState();
+}
+
+function finalizeRoute(origin, result, routeIndex, isReroute) {
+  currentRoute = buildRouteFromResult(result, routeIndex);
+  currentStepIndex = 0;
+  offRouteSince = null;
+  isRerouting = false;
+  lastSentNavParams = null;
+  log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
+  if (!isReroute) {
+    document.getElementById('navBox').style.display = 'block';
+    document.getElementById('startNavBtn').style.display = 'none';
+    document.getElementById('stopNavBtn').style.display = 'block';
+    beginTracking();
+    startStaleGpsWatchdog();
+    startHeartbeat();
+    acquireWakeLock();
+  }
+  resetNavRequestState();
+}
+
+// Reroute: deliberately simpler than the initial request — no disambiguation,
+// no alternative-route prompt. A rider mid-ride should never have to make a
+// choice; we just quietly take the first route back to the same destination.
 function triggerReroute(lat, lng) {
-  if (isRerouting || !lastDestinationText) return;
+  if (isRerouting || !lastDestinationLatLng) return;
   isRerouting = true;
   lastRerouteTime = Date.now();
   const t = currentTime24();
-  // Blank the cluster's icon while we recompute, rather than leave a stale/wrong arrow showing.
   sendFrame(buildNavFrame(Icon.noManeuver, 0, t.h, t.m, 0), 'recalculating');
   document.getElementById('navInstr').textContent = 'Recalculating…';
-  requestRoute({ lat, lng }, lastDestinationText, /*isReroute=*/true, () => {});
+  routeRequestWithRetry({
+    origin: { lat, lng }, destination: lastDestinationLatLng, travelMode: google.maps.TravelMode.DRIVING,
+  }, (result, status) => {
+    if (status !== 'OK') {
+      log('Reroute failed: ' + status, 'log-err');
+      isRerouting = false; // let a future off-route event try again
+      return;
+    }
+    finalizeRoute({ lat, lng }, result, 0, /*isReroute=*/true);
+  });
 }
+
+// #4: Wake Lock — keep the screen from auto-sleeping while navigating.
+// Not a complete fix for background execution (see README), but removes
+// the single biggest, most avoidable cause of the cluster going stale.
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) { log('Wake Lock not supported on this browser.', 'log-info'); return; }
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    log('Screen wake lock acquired.', 'log-info');
+    wakeLock.addEventListener('release', () => log('Wake lock released.', 'log-info'));
+  } catch (err) {
+    log('Wake lock failed: ' + err.message, 'log-err');
+  }
+}
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
+// Browsers auto-release the wake lock when the tab loses visibility; try to
+// reacquire whenever it becomes visible again while still navigating.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && currentRoute && !wakeLock) {
+    acquireWakeLock();
+  }
+});
 
 function startStaleGpsWatchdog() {
   lastGpsUpdateTime = Date.now();
@@ -452,6 +665,25 @@ function startStaleGpsWatchdog() {
       document.getElementById('navGpsStatus').textContent = 'lost';
     }
   }, 2000);
+}
+
+// #10: periodic keep-alive, independent of GPS arrival. If a fresh GPS fix
+// hasn't produced a send recently, resend the last known instruction as-is
+// so the cluster never sits on stale data for longer than a beat — this is
+// what the OEM app itself does (writes at a steady cadence regardless of
+// whether the underlying value actually changed).
+function startHeartbeat() {
+  heartbeatInterval = setInterval(() => {
+    if (!currentRoute || !lastSentNavParams) return;
+    if (Date.now() - lastSendTime < SEND_INTERVAL_MS) return;
+    const { iconByte, distToTurnM, remainingM } = lastSentNavParams;
+    const t = currentTime24();
+    sendFrame(buildNavFrame(iconByte, distToTurnM, t.h, t.m, remainingM), 'nav (heartbeat)');
+    lastSendTime = Date.now();
+  }, SEND_INTERVAL_MS);
+}
+function stopHeartbeat() {
+  if (heartbeatInterval !== null) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
 }
 
 function remainingDistanceAndDuration() {
@@ -517,6 +749,7 @@ function onPosition(pos) {
   // Arrival check
   if (isLastStep && distToStepEnd < ARRIVAL_THRESHOLD_M) {
     updateNavUI(Icon.arrive, 0, 0, 'Arrived', 0);
+    lastSentNavParams = { iconByte: Icon.arrive, distToTurnM: 0, remainingM: 0 };
     throttledSend(buildNavFrame(Icon.arrive, 0, currentTime24().h, currentTime24().m, 0));
     log('Arrived at destination.');
     stopNavigation();
@@ -529,10 +762,10 @@ function onPosition(pos) {
   }
 
   const { distM: remainingM, durS: remainingS } = remainingDistanceAndDuration();
-  const now = new Date();
-  const etaDate = new Date(now.getTime() + remainingS * 1000);
+  const etaDate = new Date(Date.now() + remainingS * 1000);
 
   updateNavUI(step.iconByte, distToStepEnd, remainingM, step.instructions, remainingS);
+  lastSentNavParams = { iconByte: step.iconByte, distToTurnM: distToStepEnd, remainingM };
   throttledSend(buildNavFrame(step.iconByte, distToStepEnd, etaDate.getHours(), etaDate.getMinutes(), remainingM));
 }
 
@@ -565,13 +798,18 @@ function updateNavUI(iconByte, distToTurnM, remainingM, instructions, remainingS
 function stopNavigation() {
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   if (staleGpsCheckInterval !== null) { clearInterval(staleGpsCheckInterval); staleGpsCheckInterval = null; }
+  stopHeartbeat();
+  releaseWakeLock();
   currentRoute = null;
-  lastDestinationText = null;
+  lastDestinationLatLng = null;
+  lastSentNavParams = null;
   offRouteSince = null;
   isRerouting = false;
+  clearChoiceLists();
   document.getElementById('navBox').style.display = 'none';
   document.getElementById('startNavBtn').style.display = 'block';
   document.getElementById('stopNavBtn').style.display = 'none';
+  resetNavRequestState();
 }
 document.getElementById('startNavBtn').addEventListener('click', startNavigation);
 document.getElementById('stopNavBtn').addEventListener('click', () => {
