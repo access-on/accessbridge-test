@@ -69,6 +69,26 @@
   .navbox .meta { display: flex; justify-content: space-around; margin-top: 16px; font-size: 13px; color: var(--muted); }
   .navbox .meta b { color: var(--text); font-size: 17px; display:block; }
   .choice-list { margin-top: 4px; }
+
+  /* Mini map + expand toggle */
+  .minimap-container {
+    display: none; position: relative; margin-top: 12px;
+    border-radius: 12px; overflow: hidden; border: 1px solid var(--border);
+  }
+  #minimapDiv { width: 100%; height: 130px; }
+  .map-toggle-btn {
+    position: absolute; top: 8px; right: 8px; width: 32px; height: 32px;
+    border-radius: 8px; background: rgba(230, 225, 220, 0.92);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: none; padding: 0; margin: 0; z-index: 5;
+  }
+  .map-toggle-btn svg { width: 15px; height: 15px; }
+  /* Expanded state: map takes over the full viewport */
+  .minimap-container.expanded {
+    position: fixed; inset: 0; margin: 0; border-radius: 0; z-index: 1000;
+  }
+  .minimap-container.expanded #minimapDiv { width: 100vw; height: 100vh; }
+  .minimap-container.expanded .map-toggle-btn { top: 16px; right: 16px; }
 </style>
 </head>
 <body>
@@ -120,6 +140,15 @@
         <div>Remaining<br><b id="navRemaining">--</b></div>
         <div>GPS<br><b id="navGpsStatus">--</b></div>
       </div>
+    </div>
+
+    <div class="minimap-container" id="minimapContainer">
+      <div id="minimapDiv"></div>
+      <button class="map-toggle-btn" id="mapToggleBtn" title="Expand map" aria-label="Expand map">
+        <svg id="mapToggleIcon" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" stroke-width="2.2" stroke-linecap="round">
+          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+        </svg>
+      </button>
     </div>
   </div>
 
@@ -424,6 +453,13 @@ let navRequestInProgress = false; // #2: guards against double-starting
 let wakeLock = null;              // #4
 let heartbeatInterval = null;     // #10
 let lastSentNavParams = null;     // #10: {iconByte, distToTurnM, remainingM} most recently computed, resent on heartbeat
+let map = null;                   // mini/expanded map — created once, reused across rides
+let directionsRenderer = null;
+let positionMarker = null;
+let mapExpanded = false;
+
+const EXPAND_ICON = '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>';
+const COLLAPSE_ICON = '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>';
 
 const SEND_INTERVAL_MS = 1200;      // roughly matches OEM app's ~1Hz cadence
 const ARRIVAL_THRESHOLD_M = 15;
@@ -592,6 +628,28 @@ function showRouteChoices(origin, result) {
   resetNavRequestState();
 }
 
+function ensureMapInitialized() {
+  if (map) return;
+  try {
+    map = new google.maps.Map(document.getElementById('minimapDiv'), {
+      disableDefaultUI: true, zoomControl: false, clickableIcons: false, zoom: 16,
+    });
+    directionsRenderer = new google.maps.DirectionsRenderer({ map, suppressMarkers: false });
+    positionMarker = new google.maps.Marker({
+      map,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#3ddc84', fillOpacity: 1, strokeColor: '#0a2015', strokeWeight: 2 },
+    });
+  } catch (err) {
+    log('Map init failed: ' + err.message, 'log-err');
+  }
+}
+
+function updateMapRoute(result, routeIndex) {
+  if (!directionsRenderer) return;
+  directionsRenderer.setDirections(result);
+  directionsRenderer.setRouteIndex(routeIndex);
+}
+
 function finalizeRoute(origin, result, routeIndex, isReroute) {
   currentRoute = buildRouteFromResult(result, routeIndex);
   currentStepIndex = 0;
@@ -599,14 +657,18 @@ function finalizeRoute(origin, result, routeIndex, isReroute) {
   isRerouting = false;
   lastSentNavParams = null;
   log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
+  ensureMapInitialized();
+  updateMapRoute(result, routeIndex);
   if (!isReroute) {
     document.getElementById('navBox').style.display = 'block';
+    document.getElementById('minimapContainer').style.display = 'block';
     document.getElementById('startNavBtn').style.display = 'none';
     document.getElementById('stopNavBtn').style.display = 'block';
     beginTracking();
     startStaleGpsWatchdog();
     startHeartbeat();
     acquireWakeLock();
+    if (map) map.setCenter(origin);
   }
   resetNavRequestState();
 }
@@ -715,6 +777,8 @@ function onPosition(pos) {
   const { latitude: lat, longitude: lng } = pos.coords;
   lastGpsUpdateTime = Date.now();
   document.getElementById('navGpsStatus').textContent = 'good';
+  if (positionMarker) { positionMarker.setPosition({ lat, lng }); }
+  if (map) { map.panTo({ lat, lng }); }
 
   // Find the closest point across current-and-later steps; advance step index
   // monotonically (never regress) so GPS jitter doesn't send us backwards.
@@ -809,8 +873,23 @@ function stopNavigation() {
   document.getElementById('navBox').style.display = 'none';
   document.getElementById('startNavBtn').style.display = 'block';
   document.getElementById('stopNavBtn').style.display = 'none';
+  const minimapContainer = document.getElementById('minimapContainer');
+  minimapContainer.style.display = 'none';
+  minimapContainer.classList.remove('expanded');
+  mapExpanded = false;
+  document.getElementById('mapToggleIcon').innerHTML = EXPAND_ICON;
   resetNavRequestState();
 }
+
+document.getElementById('mapToggleBtn').addEventListener('click', () => {
+  mapExpanded = !mapExpanded;
+  const container = document.getElementById('minimapContainer');
+  container.classList.toggle('expanded', mapExpanded);
+  document.getElementById('mapToggleIcon').innerHTML = mapExpanded ? COLLAPSE_ICON : EXPAND_ICON;
+  // Google Maps doesn't auto-detect a CSS-driven container resize; nudge it,
+  // and give the layout a beat to settle first.
+  setTimeout(() => { if (map) google.maps.event.trigger(map, 'resize'); }, 60);
+});
 document.getElementById('startNavBtn').addEventListener('click', startNavigation);
 document.getElementById('stopNavBtn').addEventListener('click', () => {
   stopNavigation();
