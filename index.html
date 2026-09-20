@@ -120,11 +120,12 @@
     <button class="btn-danger" id="disconnectBtn" style="display:none;">Disconnect</button>
   </div>
 
-  <div class="card" id="navCard" style="display:none;">
+  <div class="card" id="navCard">
     <h2>Navigate</h2>
     <input type="text" id="destInput" placeholder="Where to? e.g. MG Road, Bengaluru">
     <button class="btn-primary" id="startNavBtn">Start navigation</button>
     <button class="btn-danger" id="stopNavBtn" style="display:none;">Stop navigation</button>
+    <div class="subtitle" id="connectionHint" style="margin:6px 0 0; display:none;"></div>
 
     <!-- #6: destination disambiguation -->
     <div id="destChoices" class="choice-list" style="display:none;"></div>
@@ -352,15 +353,27 @@ function log(msg, cls = '') {
   logEl.scrollTop = logEl.scrollHeight;
   logLines.push(text);
 }
+function updateConnectionHint() {
+  const hint = document.getElementById('connectionHint');
+  if (!writeChar && currentRoute) {
+    hint.textContent = '📍 Previewing route — connect to the bike to send these directions to the dashboard.';
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+}
 function setConnected(isConnected, name = '') {
   document.getElementById('statusDot').classList.toggle('connected', isConnected);
   document.getElementById('statusText').textContent = isConnected ? 'Connected' : 'Not connected';
   document.getElementById('deviceName').textContent = isConnected ? name : '';
   document.getElementById('connectBtn').style.display = isConnected ? 'none' : 'block';
   document.getElementById('disconnectBtn').style.display = isConnected ? 'block' : 'none';
-  document.getElementById('navCard').style.display = isConnected ? 'block' : 'none';
   document.getElementById('testCard').style.display = isConnected ? 'block' : 'none';
-  if (!isConnected) stopNavigation();
+  updateConnectionHint();
+  // Deliberately NOT stopping navigation on disconnect anymore — the route,
+  // map, and on-screen directions are useful on their own, with or without
+  // the bike. Only actual BLE writes depend on being connected (guarded at
+  // the send call sites); everything else keeps running.
 }
 async function connect() {
   try {
@@ -671,6 +684,7 @@ function finalizeRoute(origin, result, routeIndex, isReroute) {
     if (map) map.setCenter(origin);
   }
   resetNavRequestState();
+  updateConnectionHint();
 }
 
 // Reroute: deliberately simpler than the initial request — no disambiguation,
@@ -736,7 +750,7 @@ function startStaleGpsWatchdog() {
 // whether the underlying value actually changed).
 function startHeartbeat() {
   heartbeatInterval = setInterval(() => {
-    if (!currentRoute || !lastSentNavParams) return;
+    if (!currentRoute || !lastSentNavParams || !writeChar) return; // no bike connected yet — nothing to send
     if (Date.now() - lastSendTime < SEND_INTERVAL_MS) return;
     const { iconByte, distToTurnM, remainingM } = lastSentNavParams;
     const t = currentTime24();
@@ -834,6 +848,7 @@ function onPosition(pos) {
 }
 
 function throttledSend(frame) {
+  if (!writeChar) return; // previewing a route without a bike connected — screen still updates, nothing to send yet
   const now = Date.now();
   if (now - lastSendTime < SEND_INTERVAL_MS) return;
   lastSendTime = now;
@@ -879,6 +894,7 @@ function stopNavigation() {
   mapExpanded = false;
   document.getElementById('mapToggleIcon').innerHTML = EXPAND_ICON;
   resetNavRequestState();
+  updateConnectionHint();
 }
 
 document.getElementById('mapToggleBtn').addEventListener('click', () => {
