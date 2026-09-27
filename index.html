@@ -76,6 +76,12 @@
     border-radius: 12px; overflow: hidden; border: 1px solid var(--border);
   }
   #minimapDiv { width: 100%; height: 130px; }
+  .heading-badge {
+    position: absolute; top: 8px; left: 8px; z-index: 5; display: none;
+    background: rgba(230, 225, 220, 0.92); color: #1a1a1a; font-weight: 700;
+    font-size: 12px; padding: 3px 7px; border-radius: 6px;
+  }
+  .minimap-container.expanded .heading-badge { top: 16px; left: 16px; font-size: 14px; }
   .map-toggle-btn {
     position: absolute; top: 8px; right: 8px; width: 32px; height: 32px;
     border-radius: 8px; background: rgba(230, 225, 220, 0.92);
@@ -145,6 +151,7 @@
 
     <div class="minimap-container" id="minimapContainer">
       <div id="minimapDiv"></div>
+      <div class="heading-badge" id="headingBadge"></div>
       <button class="map-toggle-btn" id="mapToggleBtn" title="Expand map" aria-label="Expand map">
         <svg id="mapToggleIcon" viewBox="0 0 24 24" fill="none" stroke="#1a1a1a" stroke-width="2.2" stroke-linecap="round">
           <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
@@ -470,6 +477,23 @@ let map = null;                   // mini/expanded map — created once, reused 
 let directionsRenderer = null;
 let positionMarker = null;
 let mapExpanded = false;
+let smoothedHeading = null; // shortest-angle-smoothed heading shown on the map arrow; null until the first real fix
+
+// Shortest-angle interpolation toward a target heading, correctly handling
+// the 0°/360° wraparound (e.g. 359° and 1° are 2° apart, not 358°).
+// Ported from the same technique a native Android sensor-fusion pipeline
+// would use to avoid a jittery compass — the math is identical, we just
+// don't have raw accelerometer/gyroscope/magnetometer access in a browser
+// to fuse in, so this smooths the one signal we do have (GPS heading).
+function shortestAngleDelta(from, to) {
+  return ((to - from + 540) % 360) - 180;
+}
+function smoothHeading(current, target, factor = 0.3) {
+  const delta = shortestAngleDelta(current, target);
+  return (current + delta * factor + 360) % 360;
+}
+let pickedDestination = null;     // { label, latLng } set by tapping the map, cleared if the text box is edited afterward
+let pickMarker = null;            // temporary pin shown for a map tap, removed once a route is confirmed
 
 const EXPAND_ICON = '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>';
 const COLLAPSE_ICON = '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>';
@@ -489,6 +513,15 @@ function mapsScriptLoaded() {
   geocoder = new google.maps.Geocoder();
   document.getElementById('keyBanner').style.display = 'none';
   log('Google Maps loaded.', 'log-info');
+  ensureMapInitialized();
+  document.getElementById('minimapContainer').style.display = 'block';
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      if (map) map.setCenter(here);
+      if (positionMarker) positionMarker.setPosition(here);
+    }, () => { /* fine — map just stays at its default view until a fix comes in */ }, { enableHighAccuracy: true });
+  }
 }
 function loadGoogleMapsScript() {
   if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === 'PASTE_YOUR_KEY_HERE') {
@@ -559,6 +592,15 @@ function startNavigation() {
   log('Getting your current location…');
   navigator.geolocation.getCurrentPosition((pos) => {
     const origin = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+    // If this destination was picked by tapping the map and the text box
+    // hasn't been edited since, skip re-geocoding and use the exact
+    // tapped point rather than round-tripping through an address string.
+    if (pickedDestination && dest === pickedDestination.label) {
+      resolveDestination(origin, { formatted_address: pickedDestination.label, geometry: { location: pickedDestination.latLng } });
+      return;
+    }
+
     log(`Looking up "${dest}"…`);
     geocoder.geocode({ address: dest }, (results, status) => {
       if (status !== 'OK' || !results.length) {
@@ -578,6 +620,30 @@ function startNavigation() {
     resetNavRequestState();
   }, { enableHighAccuracy: true });
 }
+
+// Tap-to-pick: reverse-geocode the tapped point into a readable label, drop
+// a pin, and fill the destination box — the person still has to tap "Start
+// navigation" to confirm, same as typed search, so a stray tap can't launch
+// a route by itself.
+function handleMapPick(latLng) {
+  if (!geocoder) return;
+  if (pickMarker) {
+    pickMarker.setPosition(latLng);
+  } else {
+    pickMarker = new google.maps.Marker({ map, position: latLng });
+  }
+  geocoder.geocode({ location: latLng }, (results, status) => {
+    const label = (status === 'OK' && results[0])
+      ? results[0].formatted_address
+      : `Pinned location (${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)})`;
+    pickedDestination = { label, latLng };
+    document.getElementById('destInput').value = label;
+    log(`Picked on map: ${label}`);
+  });
+}
+// Typing anything invalidates a map-picked destination, so we fall back to
+// normal text geocoding rather than silently using a stale coordinate.
+document.getElementById('destInput').addEventListener('input', () => { pickedDestination = null; });
 
 // #6: destination disambiguation
 function showDestinationChoices(origin, candidates) {
@@ -648,13 +714,27 @@ function ensureMapInitialized() {
       disableDefaultUI: true, zoomControl: false, clickableIcons: false, zoom: 16,
     });
     directionsRenderer = new google.maps.DirectionsRenderer({ map, suppressMarkers: false });
-    positionMarker = new google.maps.Marker({
-      map,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: '#3ddc84', fillOpacity: 1, strokeColor: '#0a2015', strokeWeight: 2 },
-    });
+    // An arrow, not a plain dot — rotated to match GPS heading in onPosition,
+    // so you can actually tell which way the bike is facing at a glance.
+    positionMarker = new google.maps.Marker({ map, icon: headingArrowIcon(0) });
+    map.addListener('click', (e) => handleMapPick(e.latLng));
   } catch (err) {
     log('Map init failed: ' + err.message, 'log-err');
   }
+}
+
+function headingArrowIcon(rotationDeg) {
+  return {
+    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+    scale: 5, rotation: rotationDeg,
+    fillColor: '#3ddc84', fillOpacity: 1, strokeColor: '#0a2015', strokeWeight: 2,
+  };
+}
+
+// 0°=N, 90°=E, etc. — used for the small compass-letter readout on the map.
+function headingToCompass(deg) {
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[Math.round(deg / 45) % 8];
 }
 
 function updateMapRoute(result, routeIndex) {
@@ -672,9 +752,9 @@ function finalizeRoute(origin, result, routeIndex, isReroute) {
   log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
   ensureMapInitialized();
   updateMapRoute(result, routeIndex);
+  if (pickMarker) { pickMarker.setMap(null); pickMarker = null; } // the route's own destination marker takes over now
   if (!isReroute) {
     document.getElementById('navBox').style.display = 'block';
-    document.getElementById('minimapContainer').style.display = 'block';
     document.getElementById('startNavBtn').style.display = 'none';
     document.getElementById('stopNavBtn').style.display = 'block';
     beginTracking();
@@ -734,6 +814,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 function startStaleGpsWatchdog() {
+  if (staleGpsCheckInterval !== null) clearInterval(staleGpsCheckInterval); // don't stack a second watchdog if one's already running
   lastGpsUpdateTime = Date.now();
   staleGpsCheckInterval = setInterval(() => {
     if (!currentRoute) return;
@@ -749,6 +830,7 @@ function startStaleGpsWatchdog() {
 // what the OEM app itself does (writes at a steady cadence regardless of
 // whether the underlying value actually changed).
 function startHeartbeat() {
+  if (heartbeatInterval !== null) clearInterval(heartbeatInterval); // don't stack a second heartbeat if one's already running
   heartbeatInterval = setInterval(() => {
     if (!currentRoute || !lastSentNavParams || !writeChar) return; // no bike connected yet — nothing to send
     if (Date.now() - lastSendTime < SEND_INTERVAL_MS) return;
@@ -771,7 +853,11 @@ function remainingDistanceAndDuration() {
   return { distM, durS };
 }
 
+// Now reachable from more than one entry point (typed search, map tap, a
+// route picked mid-preview) — clear any watch already running first so a
+// second start can't leak an orphaned watcher alongside it.
 function beginTracking() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   watchId = navigator.geolocation.watchPosition(onPosition, (err) => {
     // PERMISSION_DENIED (1): nothing we can do without the user re-granting access — stop cleanly.
     // POSITION_UNAVAILABLE (2) / TIMEOUT (3): transient, keep watching, just flag it on screen.
@@ -793,6 +879,18 @@ function onPosition(pos) {
   document.getElementById('navGpsStatus').textContent = 'good';
   if (positionMarker) { positionMarker.setPosition({ lat, lng }); }
   if (map) { map.panTo({ lat, lng }); }
+  // GPS heading is only reported while actually moving; if it's missing
+  // (stopped at a light, just started, etc.) leave the arrow at its last
+  // known direction rather than snapping it back to "north" incorrectly.
+  const rawHeading = pos.coords.heading;
+  if (rawHeading !== null && rawHeading !== undefined && !Number.isNaN(rawHeading)) {
+    // Raw GPS heading jitters frame to frame (e.g. 82°→87°→84°→91°); ease
+    // toward the new reading rather than snapping straight to it.
+    smoothedHeading = (smoothedHeading === null) ? rawHeading : smoothHeading(smoothedHeading, rawHeading);
+    if (positionMarker) positionMarker.setIcon(headingArrowIcon(smoothedHeading));
+    const badge = document.getElementById('headingBadge');
+    if (badge) { badge.textContent = headingToCompass(smoothedHeading); badge.style.display = 'block'; }
+  }
 
   // Find the closest point across current-and-later steps; advance step index
   // monotonically (never regress) so GPS jitter doesn't send us backwards.
@@ -875,6 +973,7 @@ function updateNavUI(iconByte, distToTurnM, remainingM, instructions, remainingS
 }
 
 function stopNavigation() {
+  smoothedHeading = null;
   if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   if (staleGpsCheckInterval !== null) { clearInterval(staleGpsCheckInterval); staleGpsCheckInterval = null; }
   stopHeartbeat();
@@ -888,8 +987,10 @@ function stopNavigation() {
   document.getElementById('navBox').style.display = 'none';
   document.getElementById('startNavBtn').style.display = 'block';
   document.getElementById('stopNavBtn').style.display = 'none';
+  // Map stays visible and centered on you, ready for the next tap-to-pick —
+  // just clear the drawn line and collapse back out of fullscreen.
+  if (directionsRenderer) directionsRenderer.set('directions', null);
   const minimapContainer = document.getElementById('minimapContainer');
-  minimapContainer.style.display = 'none';
   minimapContainer.classList.remove('expanded');
   mapExpanded = false;
   document.getElementById('mapToggleIcon').innerHTML = EXPAND_ICON;
