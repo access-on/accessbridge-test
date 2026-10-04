@@ -25,6 +25,24 @@
   .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
   .dot.connected { background: var(--accent); }
   #statusText { font-size: 15px; font-weight: 600; }
+  #statusText.warn { color: #e6b800; }
+  #statusText.err { color: var(--danger); }
+  #statusText.nav { color: var(--accent); }
+  .dot.warn { background: #e6b800; }
+  /* #13: once navigating, the route is what matters — shrink the connection
+     card (it stays visible and usable, just no longer competing for space)
+     and tuck the developer-mode link out of the way. */
+  .compact-card { padding: 10px 14px; margin-bottom: 10px; }
+  .compact-card .status-row { margin-bottom: 8px; gap: 8px; }
+  .compact-card .dot { width: 9px; height: 9px; }
+  .compact-card #statusText { font-size: 13px; }
+  .compact-card #deviceName { font-size: 11px; }
+  .compact-card button { padding: 9px; font-size: 13px; margin-top: 6px; }
+  body.is-navigating .dev-toggle-row { display: none; }
+  /* #14: touch-friendly — every tappable control gets a comfortable minimum
+     target size, not just the ones that happened to need more padding. */
+  button, .btn-choice { min-height: 48px; }
+  .map-toggle-btn { min-height: 0; }
   #deviceName { color: var(--muted); font-size: 13px; }
   button {
     width: 100%; padding: 14px; border-radius: 10px; border: none;
@@ -95,6 +113,16 @@
   }
   .minimap-container.expanded #minimapDiv { width: 100vw; height: 100vh; }
   .minimap-container.expanded .map-toggle-btn { top: 16px; right: 16px; }
+
+  /* #1: Rider vs Developer mode toggle — deliberately small and out of the way */
+  .dev-toggle-row { text-align: center; margin: 4px 0 24px; }
+  .dev-toggle-btn {
+    width: auto; display: inline-block; background: none; border: none;
+    color: var(--muted); font-size: 12px; font-weight: 500; padding: 8px 10px;
+    margin: 0; cursor: pointer; opacity: 0.6;
+  }
+  .dev-toggle-btn:active { opacity: 1; }
+  .dev-toggle-btn.on { color: var(--accent); opacity: 0.9; }
 </style>
 </head>
 <body>
@@ -114,7 +142,7 @@
     how to get one.
   </div>
 
-  <div class="card">
+  <div class="card" id="connectionCard">
     <div class="status-row">
       <div class="dot" id="statusDot"></div>
       <div>
@@ -174,10 +202,14 @@
     <button class="btn-secondary" id="clearIconBtn">Clear icon (idle)</button>
   </div>
 
-  <div class="card">
+  <div class="card" id="logCard" style="display:none;">
     <h2>Log</h2>
     <div id="log"></div>
     <button class="btn-secondary" id="copyLogBtn">📋 Copy logs</button>
+  </div>
+
+  <div class="dev-toggle-row">
+    <button class="dev-toggle-btn" id="devModeBtn" type="button">🛠 Developer mode: Off</button>
   </div>
 
 <script>
@@ -261,29 +293,46 @@ function toHex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Google Directions maneuver string -> our cluster icon byte
-function googleManeuverToIcon(maneuver) {
+// Routes API maneuver enum (confirmed exact values from Google's own docs:
+// MANEUVER_UNSPECIFIED, TURN_SLIGHT_LEFT, TURN_SHARP_LEFT, UTURN_LEFT,
+// TURN_LEFT, TURN_SLIGHT_RIGHT, TURN_SHARP_RIGHT, UTURN_RIGHT, TURN_RIGHT,
+// STRAIGHT, RAMP_LEFT, RAMP_RIGHT, MERGE, FORK_LEFT, FORK_RIGHT, FERRY,
+// FERRY_TRAIN, ROUNDABOUT_LEFT, ROUNDABOUT_RIGHT, DEPART, NAME_CHANGE)
+// -> our cluster icon byte.
+function routesManeuverToIcon(maneuver) {
   const m = {
-    'turn-left': Icon.turnLeft90,
-    'turn-slight-left': Icon.slightLeft,
-    'turn-sharp-left': Icon.sharpLeft,
-    'turn-right': Icon.turnRight90,
-    'turn-slight-right': Icon.slightRight,
-    'turn-sharp-right': Icon.sharpRight,
-    'uturn-left': Icon.uturn,
-    'uturn-right': Icon.uturn,
-    'straight': Icon.straight,
-    'ramp-left': Icon.exitLeft,
-    'ramp-right': Icon.exitRight,
-    'merge': Icon.mergeLeft,
-    'fork-left': Icon.forkLeft,
-    'fork-right': Icon.forkRight,
-    'roundabout-left': Icon.roundaboutGeneric,
-    'roundabout-right': Icon.roundaboutGeneric,
-    'keep-left': Icon.keepLeft,
-    'keep-right': Icon.keepRight,
+    TURN_LEFT: Icon.turnLeft90,
+    TURN_SLIGHT_LEFT: Icon.slightLeft,
+    TURN_SHARP_LEFT: Icon.sharpLeft,
+    TURN_RIGHT: Icon.turnRight90,
+    TURN_SLIGHT_RIGHT: Icon.slightRight,
+    TURN_SHARP_RIGHT: Icon.sharpRight,
+    UTURN_LEFT: Icon.uturn,
+    UTURN_RIGHT: Icon.uturn,
+    STRAIGHT: Icon.straight,
+    RAMP_LEFT: Icon.exitLeft,
+    RAMP_RIGHT: Icon.exitRight,
+    MERGE: Icon.mergeLeft,
+    FORK_LEFT: Icon.forkLeft,
+    FORK_RIGHT: Icon.forkRight,
+    ROUNDABOUT_LEFT: Icon.roundaboutGeneric,
+    ROUNDABOUT_RIGHT: Icon.roundaboutGeneric,
+    DEPART: Icon.straight,
+    NAME_CHANGE: Icon.straight,
+    FERRY: Icon.straight,
+    FERRY_TRAIN: Icon.straight,
   };
-  return m[maneuver] ?? Icon.straight; // unrecognized -> straight, never leave it blank mid-route
+  return m[maneuver] ?? Icon.straight; // unrecognized/unspecified -> straight, never leave it blank mid-route
+}
+
+// Routes API durations come back as strings like "1234s", not plain numbers.
+function parseDurationSeconds(durationStr) {
+  if (!durationStr) return 0;
+  const n = parseInt(String(durationStr).replace('s', ''), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+function formatDurationMin(seconds) {
+  return Math.max(1, Math.round(seconds / 60)) + ' min';
 }
 
 // =====================================================================
@@ -369,13 +418,92 @@ function updateConnectionHint() {
     hint.style.display = 'none';
   }
 }
+// #1: Rider Mode (default) vs Developer Mode. Rider mode hides manual test
+// frames and the raw log so nothing can race against live navigation data
+// (this is what caused the "Arrived" test button getting overwritten by a
+// live nav frame a tick later) and so the screen stays simple while riding.
+// The log itself keeps recording in the background either way — only the
+// on-screen box and test buttons are gated.
+let devMode = false;
+try { devMode = localStorage.getItem('ab_devMode') === '1'; } catch (e) { /* ignore */ }
+let lastKnownConnected = false;
+function updateModeVisibility() {
+  const devBtn = document.getElementById('devModeBtn');
+  devBtn.textContent = devMode ? '🛠 Developer mode: On' : '🛠 Developer mode: Off';
+  devBtn.classList.toggle('on', devMode);
+  document.getElementById('logCard').style.display = devMode ? 'block' : 'none';
+  // Test frame buttons only make sense once connected, AND only in dev mode —
+  // never surfaced to a rider who just wants to navigate.
+  document.getElementById('testCard').style.display = (devMode && lastKnownConnected) ? 'block' : 'none';
+}
+document.getElementById('devModeBtn').addEventListener('click', () => {
+  devMode = !devMode;
+  try { localStorage.setItem('ab_devMode', devMode ? '1' : '0'); } catch (e) { /* ignore */ }
+  updateModeVisibility();
+  log(`Developer mode ${devMode ? 'enabled' : 'disabled'}.`, 'log-info');
+});
+updateModeVisibility(); // set correct initial state on page load
+
+// #12: formal, named states for the one line that matters most to a rider —
+// the status text. Previously this was set directly from four or five
+// different places using plain strings, which is how "Connected" could sit
+// on screen while a reroute or reconnect was actually happening underneath.
+// This doesn't replace the existing connect/nav/reroute logic (those flags
+// stay — rewriting them too is a bigger, riskier change than this pass
+// needs) — it's a single funnel every one of those places reports through,
+// so the label on screen always matches what's actually going on.
+const AppState = Object.freeze({
+  DISCONNECTED: 'disconnected',
+  CONNECTING: 'connecting',
+  RECONNECTING: 'reconnecting',
+  CONNECTED_IDLE: 'connected_idle',
+  NAVIGATING: 'navigating',
+  NAVIGATING_OFFLINE: 'navigating_offline', // previewing a route with the bike not connected
+  REROUTING: 'rerouting',
+  ARRIVED: 'arrived',
+  ERROR: 'error',
+});
+const STATE_LABELS = {
+  [AppState.DISCONNECTED]: 'Not connected',
+  [AppState.CONNECTING]: 'Connecting…',
+  [AppState.RECONNECTING]: 'Connection lost — reconnecting…',
+  [AppState.CONNECTED_IDLE]: 'Connected',
+  [AppState.NAVIGATING]: 'Navigating',
+  [AppState.NAVIGATING_OFFLINE]: 'Navigating — bike not connected',
+  [AppState.REROUTING]: 'Recalculating route…',
+  [AppState.ARRIVED]: 'Arrived',
+  [AppState.ERROR]: 'Something went wrong',
+};
+let appState = AppState.DISCONNECTED;
+function setState(state, detail = '') {
+  appState = state;
+  const statusText = document.getElementById('statusText');
+  statusText.textContent = detail || STATE_LABELS[state] || state;
+  statusText.classList.remove('warn', 'err', 'nav');
+  if (state === AppState.RECONNECTING || state === AppState.NAVIGATING_OFFLINE) statusText.classList.add('warn');
+  else if (state === AppState.ERROR) statusText.classList.add('err');
+  else if (state === AppState.NAVIGATING || state === AppState.REROUTING || state === AppState.ARRIVED) statusText.classList.add('nav');
+  document.getElementById('statusDot').classList.toggle('warn', state === AppState.RECONNECTING);
+}
+// Re-derives the status line from what's actually true right now (BLE
+// connected? a route active?) rather than trusting whichever caller last
+// touched it — called after any connect/disconnect/nav-start/nav-stop so
+// state and label can't drift apart.
+function refreshStateFromReality() {
+  if (currentRoute) {
+    setState(lastKnownConnected ? AppState.NAVIGATING : AppState.NAVIGATING_OFFLINE);
+  } else {
+    setState(lastKnownConnected ? AppState.CONNECTED_IDLE : AppState.DISCONNECTED);
+  }
+}
 function setConnected(isConnected, name = '') {
+  lastKnownConnected = isConnected;
   document.getElementById('statusDot').classList.toggle('connected', isConnected);
-  document.getElementById('statusText').textContent = isConnected ? 'Connected' : 'Not connected';
   document.getElementById('deviceName').textContent = isConnected ? name : '';
   document.getElementById('connectBtn').style.display = isConnected ? 'none' : 'block';
   document.getElementById('disconnectBtn').style.display = isConnected ? 'block' : 'none';
-  document.getElementById('testCard').style.display = isConnected ? 'block' : 'none';
+  updateModeVisibility();
+  refreshStateFromReality();
   updateConnectionHint();
   // Deliberately NOT stopping navigation on disconnect anymore — the route,
   // map, and on-screen directions are useful on their own, with or without
@@ -383,21 +511,21 @@ function setConnected(isConnected, name = '') {
   // the send call sites); everything else keeps running.
 }
 async function connect() {
+  setState(AppState.CONNECTING);
+  // #15: a tap should always get an immediate, visible reaction — disable
+  // the button and say what's happening, rather than leaving it tappable
+  // (and silent) for however long the browser's device chooser takes.
+  const connectBtn = document.getElementById('connectBtn');
+  connectBtn.disabled = true;
+  connectBtn.textContent = 'Connecting…';
   try {
     log('Requesting device (look for SAS… in the popup)…');
     device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'SAS' }], optionalServices: [SERVICE_UUID],
     });
-    device.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; log('Disconnected.', 'log-info'); });
+    device.addEventListener('gattserverdisconnected', onGattDisconnected);
     log(`Connecting to ${device.name}…`);
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    writeChar = await service.getCharacteristic(CHAR_WRITE_UUID);
-    try {
-      const notifyChar = await service.getCharacteristic(CHAR_NOTIFY_UUID);
-      await notifyChar.startNotifications();
-      notifyChar.addEventListener('characteristicvaluechanged', () => {});
-    } catch (e) {}
+    await setupGattSession();
     setConnected(true, device.name);
     log('Connected. Ready.');
     // #1 FIX: send the handshake/identity frame automatically, right away —
@@ -407,9 +535,75 @@ async function connect() {
     await sendFrame(buildIdentityFrame('AccessBridge'), 'identity');
   } catch (err) {
     log('Connect failed: ' + err.message, 'log-err');
+    setState(AppState.ERROR, 'Connect failed — tap "Connect to bike" to retry');
+  } finally {
+    connectBtn.disabled = false;
+    connectBtn.textContent = 'Connect to bike';
   }
 }
-function disconnect() { if (device && device.gatt.connected) device.gatt.disconnect(); }
+
+/** Shared by the first connect and every reconnect attempt — gets from a raw
+ * GATT server to a working write characteristic + notifications. */
+async function setupGattSession() {
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  writeChar = await service.getCharacteristic(CHAR_WRITE_UUID);
+  try {
+    const notifyChar = await service.getCharacteristic(CHAR_NOTIFY_UUID);
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener('characteristicvaluechanged', () => {});
+  } catch (e) {}
+}
+
+let userInitiatedDisconnect = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1500;
+
+function disconnect() {
+  userInitiatedDisconnect = true;
+  if (device && device.gatt.connected) device.gatt.disconnect();
+}
+
+// Fires on any GATT disconnect — a deliberate tap on "Disconnect" (handled
+// above by the flag) or a genuine drop (out of range, interference). For
+// the latter, the device object the browser already authorized stays valid
+// for this page session, so we can reconnect to it directly without asking
+// the person to pick it from the chooser again.
+function onGattDisconnected() {
+  setConnected(false);
+  writeChar = null;
+  if (userInitiatedDisconnect) {
+    userInitiatedDisconnect = false;
+    log('Disconnected.', 'log-info');
+    return;
+  }
+  log('Bike connection dropped — reconnecting…', 'log-err');
+  setState(AppState.RECONNECTING);
+  attemptReconnect();
+}
+
+async function attemptReconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    log('Could not reconnect automatically. Tap "Connect to bike" to try again.', 'log-err');
+    setState(AppState.ERROR, 'Reconnect failed — tap "Connect to bike"');
+    reconnectAttempts = 0;
+    return;
+  }
+  reconnectAttempts++;
+  setState(AppState.RECONNECTING, `Reconnecting… (attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+  await new Promise(resolve => setTimeout(resolve, RECONNECT_BASE_DELAY_MS * reconnectAttempts));
+  try {
+    await setupGattSession();
+    setConnected(true, device.name);
+    log(`Reconnected (attempt ${reconnectAttempts}).`);
+    reconnectAttempts = 0;
+    await sendFrame(buildIdentityFrame('AccessBridge'), 'identity');
+  } catch (err) {
+    log(`Reconnect attempt ${reconnectAttempts} failed: ${err.message}`, 'log-err');
+    attemptReconnect();
+  }
+}
 async function sendFrame(bytes, label) {
   if (!writeChar) { log('Not connected.', 'log-err'); return; }
   try {
@@ -457,7 +651,6 @@ document.getElementById('copyLogBtn').addEventListener('click', async () => {
 // =====================================================================
 // Live navigation
 // =====================================================================
-let directionsService = null;
 let geocoder = null;
 let currentRoute = null;          // { steps:[{iconByte,instructions,points,distanceM,durationS,endLat,endLng}], totalDistanceM, totalDurationS }
 let currentStepIndex = 0;
@@ -474,7 +667,8 @@ let wakeLock = null;              // #4
 let heartbeatInterval = null;     // #10
 let lastSentNavParams = null;     // #10: {iconByte, distToTurnM, remainingM} most recently computed, resent on heartbeat
 let map = null;                   // mini/expanded map — created once, reused across rides
-let directionsRenderer = null;
+let routePolyline = null;
+let destMarker = null;
 let positionMarker = null;
 let mapExpanded = false;
 let smoothedHeading = null; // shortest-angle-smoothed heading shown on the map arrow; null until the first real fix
@@ -505,11 +699,109 @@ const OFF_ROUTE_CONFIRM_MS = 8000;  // must be off-route this long before we tru
 const REROUTE_COOLDOWN_MS = 15000;  // don't reroute more than once per this window
 const STALE_GPS_MS = 10000;         // warn if no GPS fix for this long while navigating
 const MAX_DEST_CANDIDATES = 4;
-const ROUTE_RETRY_STATUSES = new Set(['NOT_FOUND', 'UNKNOWN_ERROR']); // #3: worth a quiet retry
-const ROUTE_MAX_RETRIES = 2;
+const GEOCODE_RETRY_STATUSES = new Set(['UNKNOWN_ERROR', 'OVER_QUERY_LIMIT']); // transient-looking, worth a quiet retry
+const GEOCODE_MAX_RETRIES = 2;
+
+// =====================================================================
+// Routes API — replaces the old DirectionsService for actual route
+// computation. Geocoder (text search + tap-to-pick reverse geocode) and
+// the Maps JS library for the map display are unaffected and still used.
+//
+// TWO_WHEELER is Google's real motorcycle/scooter-specific mode — distinct
+// from BICYCLE, which is for pedal cyclists and would route you down bike
+// paths/avoid roads in ways that make no sense for a scooter. We try
+// TWO_WHEELER first and only fall back to DRIVE if that specifically
+// fails (not available, rejected, etc.) — not on every request, and never
+// on a plain signal drop, which gets its own retry instead (see below).
+// =====================================================================
+const ROUTES_API_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+const ROUTES_FIELD_MASK = [
+  'routes.distanceMeters', 'routes.duration', 'routes.polyline.encodedPolyline',
+  'routes.legs.steps.navigationInstruction', 'routes.legs.steps.distanceMeters',
+  'routes.legs.steps.staticDuration', 'routes.legs.steps.polyline.encodedPolyline',
+  'routes.legs.steps.startLocation', 'routes.legs.steps.endLocation',
+].join(',');
+const ROUTE_NETWORK_RETRIES = 3;
+const ROUTE_NETWORK_RETRY_DELAY_MS = 2000;
+
+/** True only for "fetch couldn't reach the server at all" — not an HTTP error response. */
+function isNetworkError(err) {
+  return err instanceof TypeError;
+}
+
+async function computeRoute(origin, destLatLng, travelMode, computeAlternatives) {
+  const body = {
+    origin: { location: { latLng: { latitude: origin.lat, longitude: origin.lng } } },
+    destination: { location: { latLng: { latitude: destLatLng.lat, longitude: destLatLng.lng } } },
+    travelMode,
+    routingPreference: 'TRAFFIC_AWARE',
+    computeAlternativeRoutes: !!computeAlternatives,
+  };
+  const res = await fetch(ROUTES_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+      'X-Goog-FieldMask': ROUTES_FIELD_MASK,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 150) : ''}`);
+  }
+  const data = await res.json();
+  if (!data.routes || !data.routes.length) throw new Error('ZERO_RESULTS');
+  return data;
+}
+
+// Signal drop handling: a true network failure (no signal) retries the
+// SAME request a few times with a short delay — it's not a two-wheeler
+// problem, so there's nothing to fall back to, just wait and try again.
+async function computeRouteWithNetworkRetry(origin, destLatLng, travelMode, computeAlternatives, retriesLeft = ROUTE_NETWORK_RETRIES) {
+  try {
+    return await computeRoute(origin, destLatLng, travelMode, computeAlternatives);
+  } catch (err) {
+    if (isNetworkError(err) && retriesLeft > 0) {
+      log(`No signal — retrying route request… (${retriesLeft} left)`, 'log-info');
+      await new Promise(resolve => setTimeout(resolve, ROUTE_NETWORK_RETRY_DELAY_MS));
+      return computeRouteWithNetworkRetry(origin, destLatLng, travelMode, computeAlternatives, retriesLeft - 1);
+    }
+    throw err;
+  }
+}
+
+// Two-wheeler first, driving as a silent fallback — but only for a REAL
+// two-wheeler-specific failure, never for a plain signal drop (that's
+// already been retried above and should surface honestly, not quietly
+// swap modes and mask the real problem).
+async function requestRoute(origin, destLatLng, computeAlternatives) {
+  try {
+    const data = await computeRouteWithNetworkRetry(origin, destLatLng, 'TWO_WHEELER', computeAlternatives);
+    return { data, usedFallback: false };
+  } catch (err) {
+    if (isNetworkError(err)) throw err;
+    log('Two-wheeler mode unavailable (' + err.message + ') — trying driving mode.', 'log-info');
+    const data = await computeRouteWithNetworkRetry(origin, destLatLng, 'DRIVE', computeAlternatives);
+    return { data, usedFallback: true };
+  }
+}
+
+// Same quiet-retry treatment for geocoding (text search / reverse geocode
+// on a map tap) — a transient-looking status while riding through a weak
+// signal area shouldn't be treated the same as "that place doesn't exist."
+function geocodeWithRetry(request, callback, retriesLeft = GEOCODE_MAX_RETRIES) {
+  geocoder.geocode(request, (results, status) => {
+    if (status !== 'OK' && GEOCODE_RETRY_STATUSES.has(status) && retriesLeft > 0) {
+      log(`Geocoding returned ${status}, retrying…`, 'log-info');
+      setTimeout(() => geocodeWithRetry(request, callback, retriesLeft - 1), 1500);
+      return;
+    }
+    callback(results, status);
+  });
+}
 
 function mapsScriptLoaded() {
-  directionsService = new google.maps.DirectionsService();
   geocoder = new google.maps.Geocoder();
   document.getElementById('keyBanner').style.display = 'none';
   log('Google Maps loaded.', 'log-info');
@@ -535,40 +827,27 @@ function loadGoogleMapsScript() {
 }
 window.mapsScriptLoaded = mapsScriptLoaded;
 
-function buildRouteFromResult(result, routeIndex) {
-  const leg = result.routes[routeIndex].legs[0];
-  const rawSteps = leg.steps.map(s => ({
-    iconByte: googleManeuverToIcon(s.maneuver || ''),
-    instructions: s.instructions.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-    points: decodePolyline(s.polyline.points),
-    distanceM: s.distance.value,
-    durationS: s.duration.value,
-    endLat: s.end_location.lat(), endLng: s.end_location.lng(),
+function buildRouteFromRoutesApiResult(routeObj) {
+  const rawSteps = routeObj.legs[0].steps.map(s => ({
+    iconByte: routesManeuverToIcon(s.navigationInstruction && s.navigationInstruction.maneuver),
+    instructions: (s.navigationInstruction && s.navigationInstruction.instructions) || 'Continue',
+    points: decodePolyline(s.polyline.encodedPolyline),
+    distanceM: s.distanceMeters,
+    durationS: parseDurationSeconds(s.staticDuration),
+    endLat: s.endLocation.latLng.latitude, endLng: s.endLocation.latLng.longitude,
   }));
   return {
     steps: mergeShortLegs(rawSteps),
-    totalDistanceM: leg.distance.value,
-    totalDurationS: leg.duration.value,
+    totalDistanceM: routeObj.distanceMeters,
+    totalDurationS: parseDurationSeconds(routeObj.duration),
   };
-}
-
-// #3: small helper — retry a couple of times on transient-looking directions
-// failures before giving up, since we saw NOT_FOUND clear up on its own on
-// a real ride after a couple of seconds.
-function routeRequestWithRetry(request, callback, retriesLeft = ROUTE_MAX_RETRIES) {
-  directionsService.route(request, (result, status) => {
-    if (status !== 'OK' && ROUTE_RETRY_STATUSES.has(status) && retriesLeft > 0) {
-      log(`Directions returned ${status}, retrying… (${retriesLeft} left)`, 'log-info');
-      setTimeout(() => routeRequestWithRetry(request, callback, retriesLeft - 1), 1000);
-      return;
-    }
-    callback(result, status);
-  });
 }
 
 function resetNavRequestState() {
   navRequestInProgress = false;
-  document.getElementById('startNavBtn').disabled = false;
+  const btn = document.getElementById('startNavBtn');
+  btn.disabled = false;
+  btn.textContent = 'Start navigation';
 }
 
 function clearChoiceLists() {
@@ -582,11 +861,13 @@ function startNavigation() {
   if (navRequestInProgress) return;
   const dest = document.getElementById('destInput').value.trim();
   if (!dest) { log('Enter a destination first.', 'log-err'); return; }
-  if (!directionsService || !geocoder) { log('Google Maps not ready yet (check API key).', 'log-err'); return; }
+  if (!geocoder) { log('Google Maps not ready yet (check API key).', 'log-err'); return; }
   if (!navigator.geolocation) { log('No GPS available in this browser.', 'log-err'); return; }
 
   navRequestInProgress = true;
-  document.getElementById('startNavBtn').disabled = true;
+  const startBtn = document.getElementById('startNavBtn');
+  startBtn.disabled = true;
+  startBtn.textContent = 'Finding route…';
   clearChoiceLists();
 
   log('Getting your current location…');
@@ -602,7 +883,7 @@ function startNavigation() {
     }
 
     log(`Looking up "${dest}"…`);
-    geocoder.geocode({ address: dest }, (results, status) => {
+    geocodeWithRetry({ address: dest }, (results, status) => {
       if (status !== 'OK' || !results.length) {
         log('Could not find that place: ' + status, 'log-err');
         resetNavRequestState();
@@ -632,7 +913,7 @@ function handleMapPick(latLng) {
   } else {
     pickMarker = new google.maps.Marker({ map, position: latLng });
   }
-  geocoder.geocode({ location: latLng }, (results, status) => {
+  geocodeWithRetry({ location: latLng }, (results, status) => {
     const label = (status === 'OK' && results[0])
       ? results[0].formatted_address
       : `Pinned location (${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)})`;
@@ -664,46 +945,44 @@ function showDestinationChoices(origin, candidates) {
   resetNavRequestState(); // re-enable Start button; the tap on a choice continues the flow
 }
 
-function resolveDestination(origin, geocodeResult) {
+async function resolveDestination(origin, geocodeResult) {
   navRequestInProgress = true;
-  document.getElementById('startNavBtn').disabled = true;
+  const startBtn = document.getElementById('startNavBtn');
+  startBtn.disabled = true;
+  startBtn.textContent = 'Finding route…';
   const destLatLng = { lat: geocodeResult.geometry.location.lat(), lng: geocodeResult.geometry.location.lng() };
   lastDestinationLatLng = destLatLng;
   log('Requesting route…');
-  routeRequestWithRetry({
-    origin, destination: destLatLng, travelMode: google.maps.TravelMode.DRIVING,
-    provideRouteAlternatives: true,
-  }, (result, status) => {
-    if (status !== 'OK') {
-      log('Directions request failed: ' + status, 'log-err');
-      resetNavRequestState();
-      return;
-    }
-    if (result.routes.length > 1) {
-      showRouteChoices(origin, result);
+  try {
+    const { data, usedFallback } = await requestRoute(origin, destLatLng, /*computeAlternatives=*/true);
+    if (usedFallback) log('Two-wheeler mode unavailable this time — used driving mode instead.', 'log-info');
+    if (data.routes.length > 1) {
+      showRouteChoices(origin, destLatLng, data);
     } else {
-      finalizeRoute(origin, result, 0, /*isReroute=*/false);
+      finalizeRoute(origin, destLatLng, data.routes[0], /*isReroute=*/false);
     }
-  });
+  } catch (err) {
+    log('Route request failed: ' + err.message, 'log-err');
+    resetNavRequestState();
+  }
 }
 
 // #7: route alternatives
-function showRouteChoices(origin, result) {
+function showRouteChoices(origin, destLatLng, data) {
   const container = document.getElementById('routeChoices');
   container.innerHTML = '';
-  result.routes.forEach((r, i) => {
-    const leg = r.legs[0];
+  data.routes.forEach((r, i) => {
     const btn = document.createElement('button');
     btn.className = 'btn-choice';
-    btn.innerHTML = `<b>${leg.distance.text}, ${leg.duration.text}</b> — ${r.summary || 'Route ' + (i + 1)}`;
+    btn.innerHTML = `<b>${formatKmMi(r.distanceMeters)}, ${formatDurationMin(parseDurationSeconds(r.duration))}</b> — Route ${i + 1}`;
     btn.addEventListener('click', () => {
       clearChoiceLists();
-      finalizeRoute(origin, result, i, /*isReroute=*/false);
+      finalizeRoute(origin, destLatLng, r, /*isReroute=*/false);
     });
     container.appendChild(btn);
   });
   container.style.display = 'block';
-  log(`${result.routes.length} route options — pick one above.`);
+  log(`${data.routes.length} route options — pick one above.`);
   resetNavRequestState();
 }
 
@@ -713,7 +992,6 @@ function ensureMapInitialized() {
     map = new google.maps.Map(document.getElementById('minimapDiv'), {
       disableDefaultUI: true, zoomControl: false, clickableIcons: false, zoom: 16,
     });
-    directionsRenderer = new google.maps.DirectionsRenderer({ map, suppressMarkers: false });
     // An arrow, not a plain dot — rotated to match GPS heading in onPosition,
     // so you can actually tell which way the bike is facing at a glance.
     positionMarker = new google.maps.Marker({ map, icon: headingArrowIcon(0) });
@@ -737,32 +1015,48 @@ function headingToCompass(deg) {
   return dirs[Math.round(deg / 45) % 8];
 }
 
-function updateMapRoute(result, routeIndex) {
-  if (!directionsRenderer) return;
-  directionsRenderer.setDirections(result);
-  directionsRenderer.setRouteIndex(routeIndex);
+// The Routes API's response shape is different enough from the old
+// DirectionsResult that DirectionsRenderer can't draw it directly — so we
+// draw the route ourselves with a plain Polyline, decoded the same way our
+// own protocol-side polyline decoding already works.
+function updateMapRoute(routeObj, destLatLng) {
+  if (!map) return;
+  const path = decodePolyline(routeObj.polyline.encodedPolyline);
+  if (routePolyline) {
+    routePolyline.setPath(path);
+  } else {
+    routePolyline = new google.maps.Polyline({ map, path, strokeColor: '#3ddc84', strokeWeight: 5, strokeOpacity: 0.9 });
+  }
+  if (destMarker) {
+    destMarker.setPosition(destLatLng);
+  } else {
+    destMarker = new google.maps.Marker({ map, position: destLatLng });
+  }
 }
 
-function finalizeRoute(origin, result, routeIndex, isReroute) {
-  currentRoute = buildRouteFromResult(result, routeIndex);
+function finalizeRoute(origin, destLatLng, routeObj, isReroute) {
+  currentRoute = buildRouteFromRoutesApiResult(routeObj);
   currentStepIndex = 0;
   offRouteSince = null;
   isRerouting = false;
   lastSentNavParams = null;
   log(`Route ${isReroute ? 're-found' : 'found'}: ${(currentRoute.totalDistanceM/1000).toFixed(1)}km, ${Math.round(currentRoute.totalDurationS/60)} min.`);
   ensureMapInitialized();
-  updateMapRoute(result, routeIndex);
+  updateMapRoute(routeObj, destLatLng);
   if (pickMarker) { pickMarker.setMap(null); pickMarker = null; } // the route's own destination marker takes over now
   if (!isReroute) {
     document.getElementById('navBox').style.display = 'block';
     document.getElementById('startNavBtn').style.display = 'none';
     document.getElementById('stopNavBtn').style.display = 'block';
+    document.getElementById('connectionCard').classList.add('compact-card');
+    document.body.classList.add('is-navigating');
     beginTracking();
     startStaleGpsWatchdog();
     startHeartbeat();
     acquireWakeLock();
     if (map) map.setCenter(origin);
   }
+  refreshStateFromReality();
   resetNavRequestState();
   updateConnectionHint();
 }
@@ -770,23 +1064,23 @@ function finalizeRoute(origin, result, routeIndex, isReroute) {
 // Reroute: deliberately simpler than the initial request — no disambiguation,
 // no alternative-route prompt. A rider mid-ride should never have to make a
 // choice; we just quietly take the first route back to the same destination.
-function triggerReroute(lat, lng) {
+async function triggerReroute(lat, lng) {
   if (isRerouting || !lastDestinationLatLng) return;
   isRerouting = true;
+  setState(AppState.REROUTING);
   lastRerouteTime = Date.now();
   const t = currentTime24();
   sendFrame(buildNavFrame(Icon.noManeuver, 0, t.h, t.m, 0), 'recalculating');
   document.getElementById('navInstr').textContent = 'Recalculating…';
-  routeRequestWithRetry({
-    origin: { lat, lng }, destination: lastDestinationLatLng, travelMode: google.maps.TravelMode.DRIVING,
-  }, (result, status) => {
-    if (status !== 'OK') {
-      log('Reroute failed: ' + status, 'log-err');
-      isRerouting = false; // let a future off-route event try again
-      return;
-    }
-    finalizeRoute({ lat, lng }, result, 0, /*isReroute=*/true);
-  });
+  try {
+    const { data, usedFallback } = await requestRoute({ lat, lng }, lastDestinationLatLng, /*computeAlternatives=*/false);
+    if (usedFallback) log('Rerouted using driving mode (two-wheeler unavailable).', 'log-info');
+    finalizeRoute({ lat, lng }, lastDestinationLatLng, data.routes[0], /*isReroute=*/true);
+  } catch (err) {
+    log('Reroute failed: ' + err.message, 'log-err');
+    isRerouting = false; // let a future off-route event try again
+    refreshStateFromReality();
+  }
 }
 
 // #4: Wake Lock — keep the screen from auto-sleeping while navigating.
@@ -833,6 +1127,7 @@ function startHeartbeat() {
   if (heartbeatInterval !== null) clearInterval(heartbeatInterval); // don't stack a second heartbeat if one's already running
   heartbeatInterval = setInterval(() => {
     if (!currentRoute || !lastSentNavParams || !writeChar) return; // no bike connected yet — nothing to send
+    if (isRerouting) return; // don't resend the last pre-reroute frame while a fresh one is on its way
     if (Date.now() - lastSendTime < SEND_INTERVAL_MS) return;
     const { iconByte, distToTurnM, remainingM } = lastSentNavParams;
     const t = currentTime24();
@@ -988,12 +1283,16 @@ function stopNavigation() {
   document.getElementById('startNavBtn').style.display = 'block';
   document.getElementById('stopNavBtn').style.display = 'none';
   // Map stays visible and centered on you, ready for the next tap-to-pick —
-  // just clear the drawn line and collapse back out of fullscreen.
-  if (directionsRenderer) directionsRenderer.set('directions', null);
+  // just clear the drawn line/destination marker and collapse out of fullscreen.
+  if (routePolyline) { routePolyline.setMap(null); routePolyline = null; }
+  if (destMarker) { destMarker.setMap(null); destMarker = null; }
   const minimapContainer = document.getElementById('minimapContainer');
   minimapContainer.classList.remove('expanded');
   mapExpanded = false;
   document.getElementById('mapToggleIcon').innerHTML = EXPAND_ICON;
+  document.getElementById('connectionCard').classList.remove('compact-card');
+  document.body.classList.remove('is-navigating');
+  refreshStateFromReality();
   resetNavRequestState();
   updateConnectionHint();
 }
